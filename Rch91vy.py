@@ -1,11 +1,12 @@
 """
-December 19, 2014, Hyun Chang Yi
-OLG value function approximation, a Python version of Rch91v.g by Burkhard Heer
+December 29, 2014, Hyun Chang Yi
+OLG value function approximation, a Python version of Rch91d.g and Rch91v.g by Burkhard Heer
 Cubic Spline and Golden Section Search
 """
 
 from scipy.interpolate import interp1d
 from scipy.optimize import fsolve, minimize_scalar, bisect
+from scipy.linalg import toeplitz
 from numpy import linspace, mean, array
 from random import random
 from matplotlib import pyplot as plt
@@ -13,7 +14,7 @@ from datetime import datetime
 from math import fabs
 
 
-class SteadyPopulation:
+class OLG:
     """
     This class is just a "struct" to hold  the collection of primitives defining
     a economy with a fixed demographic structure.
@@ -28,11 +29,11 @@ class SteadyPopulation:
         self.neg = neg
         self.tau = zeta/(2.0+zeta)
         self.agrid = linspace(Kmin,Kmax,Na)
-        self.N = 0.2
-        self.K = 0.7
         self.w = 0
         self.r = 0
         self.b = 0
+        self.N = 0.2
+        self.K = 0.7 #(self.alpha/(self.r+self.delta))**(1/(1-self.alpha))*self.N
         self.v = array([[0 for l in range(self.Na)] for y in range(self.T)], dtype=float)
         self.vtilde = [[] for y in range(self.T)]
         self.a = array([[0 for l in range(self.Na)] for y in range(self.T)], dtype=float)
@@ -278,10 +279,10 @@ class SteadyPopulation:
         return c, n
 
 
-def valuemethod(N=10,R=10,W=20,Na=51,tol=0.005,Kmin=0,beta=0.99,
+def valuemethod(N=10,R=10,W=20,Na=51,tol=0.005,Kmin=0,beta=0.99,phi=0.8,
                     sigma=2.0,alpha=0.3,zeta=0.3,delta=0.1):
     start_time = datetime.now() # records the starting time
-    eco = SteadyPopulation(R=R,W=W,Na=Na,tol=tol,Kmin=Kmin,beta=beta,
+    eco = OLG(R=R,W=W,Na=Na,tol=tol,Kmin=Kmin,beta=beta,phi=phi,
                             sigma=sigma,alpha=alpha,zeta=zeta,delta=delta)
     for i in range(N):
         eco.IterateValues()
@@ -295,10 +296,10 @@ def valuemethod(N=10,R=10,W=20,Na=51,tol=0.005,Kmin=0,beta=0.99,
     return eco
 
 
-def directmethod(N=30,R=10,W=20,tol=0.005,beta=0.99,
+def directmethod(N=30,R=10,W=20,tol=0.005,beta=0.99,phi=0.8,
                     sigma=2.0,alpha=0.3,zeta=0.3,delta=0.1,gamma=2):
     start_time = datetime.now() # records the starting time
-    eco = SteadyPopulation(R=R,W=W,tol=tol,beta=beta,sigma=sigma,
+    eco = OLG(R=R,W=W,tol=tol,beta=beta,sigma=sigma,phi=phi,
                             alpha=alpha,zeta=zeta,delta=delta,gamma=gamma)
     for i in range(N):
         eco.IteratePaths()
@@ -309,6 +310,9 @@ def directmethod(N=30,R=10,W=20,tol=0.005,beta=0.99,
     end_time = datetime.now()
     print('Duration: {}'.format(end_time - start_time))
     return eco
+
+
+
 
 
 def plotpath(ss):
@@ -337,4 +341,7 @@ def plotpath(ss):
 
 """
 eco = valuemethod(N=15,R=20,W=40,Na=51) works well.
+eco = directmethod(N=50,R=20,W=40,tol=0.001,delta=0.05,alpha=0.3,beta=0.965,phi=0.9)
+eco = directmethod(N=50,R=20,W=40,tol=0.001,delta=0.05,alpha=0.3,beta=0.96,phi=0.9)
+
 """
