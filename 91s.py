@@ -42,15 +42,14 @@ class economy:
     def Aggregate(self, g):
         # Aggregate all generations' capital and labor supply
         Knew = mean(g.apath)
-        Nnew = mean(g.npath)*g.W/(g.T*1.0)
+        Nnew = mean(g.npath)
         print 'At r:',"%2.1f" %(self.r[0]*100),'At w:',"%2.1f" %(self.w[0]),\
                     'Ks:',"%1.3f" %(Knew),'and Ls:',"%1.3f" %(Nnew), \
                     'and Ks/Ys',"%1.3f" %(Knew/(Knew**(self.alpha)*Nnew**(1-self.alpha)))
+        # whether aggregate asset has converged, i.e., no change from the last iteration
         self.Converged = (fabs(Knew-self.K) < self.tol*self.K)
         self.K = self.phi*self.K + (1-self.phi)*Knew
         self.N = self.phi*self.N + (1-self.phi)*Nnew
-        # whether aggregate asset has converged, i.e., no change from the last iteration
-        self.Converged = False
 
 
     def UpdatePrices(self, g):
@@ -110,6 +109,7 @@ class generation:
                 m = max(0, m0)  # Rch91v.g uses m = max(0, m0-1)
                 m0, a, b, c = self.GetBracket(y, i, m, E)
                 # Find optimal a' using Golden Section Search
+
                 if a == b:
                     self.a[y][i] = 0
                 elif b == c:
@@ -207,14 +207,14 @@ class generation:
             elif q == 1:
                 self.apath[-1] = 0.3
             else:
-                self.apath[-1] = self.clip(aT[-1]-(aT[-1]-aT[-2])*a1[-1]/(a1[-1]-a1[-2]))
+                self.apath[-1] = self.clip(aT[-1]-(aT[-1]-aT[-2])*(a1[-1]-0.06)/(a1[-1]-a1[-2]))
             self.npath[-1] = 0
             self.cpath[-1] = self.apath[-1]*(1+E.r[-1]) + E.b[-1]
             for y in range(-2,-(self.T+1),-1):     # y = -2, -3,..., -60
                 self.apath[y], self.npath[y], self.cpath[y] = self.DirectSolve(y, E)
             aT.append(self.apath[-1])
             a1.append(self.apath[-self.T])
-            if (fabs(self.apath[-self.T]) < self.tol):
+            if (fabs(self.apath[-self.T]-0.06) < self.tol):
                 break
         for y in range(-1, -(self.T+1), -1):
             self.upath[y] = self.util(self.cpath[y], self.npath[y])
@@ -315,7 +315,7 @@ def direct(g,e,N=30):
 plt.close("all")
 
 
-def showpath(e):
+def showpath(g):
     fig = plt.figure(facecolor='white')
     ax = fig.add_subplot(111)
     ax1 = fig.add_subplot(221)
@@ -328,10 +328,10 @@ def showpath(e):
     ax.spines['left'].set_color('none')
     ax.spines['right'].set_color('none')
     ax.tick_params(labelcolor='w', top='off', bottom='off', left='off', right='off')
-    ax1.plot(e.apath)
-    ax2.plot(e.npath)
-    ax3.plot(e.cpath)
-    ax4.plot(e.upath)
+    ax1.plot(g.apath)
+    ax2.plot(g.npath)
+    ax3.plot(g.cpath)
+    ax4.plot(g.upath)
     ax.set_xlabel('generation')
     ax1.set_title('Asset')
     ax2.set_title('Labor')
