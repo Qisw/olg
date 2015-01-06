@@ -10,15 +10,18 @@ A representative generation lives for T years in the economy.
 """
 
 from scipy.interpolate import interp1d
-from scipy.optimize import fsolve, minimize_scalar
-from numpy import linspace, mean, array, zeros, absolute
+from scipy.optimize import fsolve, minimize_scalar, bisect, root
+from scipy.linalg import toeplitz
+from numpy import linspace, mean, array, zeros, cos, dot, sin, ones, concatenate, split, vectorize, absolute
+from random import random
 from matplotlib import pyplot as plt
 from datetime import datetime
 from math import fabs, pi
 import time
+import pylab
 
 
-class economy:
+class econ:
     """ This class is just a "struct" to hold  the collection of primitives defining
     an economy in which one or multiple generations live """
     def __init__(self, alpha=0.3, zeta=0.3, delta=0.06, phi=0.8,
@@ -57,9 +60,16 @@ class economy:
                 if t <= TS-T-1:
                     K1[t] = mean([gs[t+y].apath[-(y+1)] for y in range(T)])
                     N1[t] = mean([gs[t+y].npath[-(y+1)] for y in range(T)])
+                    print 't,K1[t]', t, K1[t], [gs[t+y].apath[-(y+1)] for y in range(T)]
                 else:
                     K1[t] = mean([gs[TS-T].apath[-(y+1)] for y in range(T)])
                     N1[t] = mean([gs[TS-T].npath[-(y+1)] for y in range(T)])
+                    print t, K1
+            print '\n for years of 0, T, 2T, 3T:'
+            for y in [0, T, 2*T, 3*T]:
+                print 'At (r,w):',[self.r[y],self.w[y]],'Ks, Ls:', [K1[y],N1[y]], \
+                            'and Ks/Ys:',K1[y]/(K1[y]**(self.alpha)*N1[y]**(1-self.alpha))
+            # whether aggregate asset has converged, i.e., no change from the last iteration        
             self.Converged = (sum(absolute(K1-self.K)) < self.tol)
             """ Update the economy's aggregate K and N with weight phi on the old """
         self.K = self.phi*self.K + (1-self.phi)*K1
@@ -84,13 +94,13 @@ class economy:
         self.p = array([self.r, self.w, self.tau, self.b])
 
 
-class generation:
+class gen:
     """ This class is just a "struct" to hold the collection of primitives defining
-    a generation """
+    a generation. y stands for the period in which the generation dies. """
     def __init__(self, beta=0.96, sigma=2.0, gamma=2.0, aH=5, aL=0, y=0,
         aN=51, Nq=50, psi=0.001, tol=0.005, tol10=1e-10, neg=-1e10, W=40, R=20):
-        self.beta, self.sigma, self.gamma, self.psi = beta, sigma, gamma, psi
-        self.R, self.W, self.T, self.y = R, W, W + R, y
+        self.y, self.beta, self.sigma, self.gamma, self.psi = beta, sigma, gamma, psi, y
+        self.R, self.W, self.T = R, W, W + R
         self.aH, self.aL, self.aN, self.aa = aH, aL, aN, linspace(aL,aH,aN)
         self.tol, self.tol10, self.Nq, self.neg = tol, tol10, Nq, neg
         """ value function and its interpolation """
@@ -242,7 +252,6 @@ class generation:
                     break
             for y in range(-1, -(RT+1), -1):
                 self.upath[y] = self.util(self.cpath[y], self.npath[y])
-        return self.apath, self.cpath, self.npath, self.upath
 
 
     def DirectSolve(self, y, p):
@@ -297,60 +306,96 @@ class generation:
         def foc((c,n)):
             return (1 + r[y])*a0+(1 - tau[y])*w[y]*n - a1 - c,\
                 (1 - tau[y])*w[y]*self.uc(c,n) + self.un(c,n)
+                # self.gamma*(c+self.psi)-(1-n)*self.w*(1-self.tau)
         c, n = fsolve(foc,(0.3,0.3))
+        """ or, we can analytically solve for c and n
+        c = ((1+E.r[y])*a0-a1+(1-E.tau[y])*E.w[y]-self.gamma*self.psi)/(1+self.gamma)
+        n = (a1-(1+E.r[y])*a0+c)/(E.w[y]*(1-E.tau[y])) """
         return c, n
 
 
-"""
-The following are procedures to get steady state of the economy using direct 
-age-profile iteration and projection method
-"""
+"""The following are procedures to get steady state of the economy using direct 
+age-profile iteration and projection method"""
 
-def transition(zeta=0.3, zeta1=0.2, N=40, W=40, R=20, alpha=0.3, delta=0.05, 
+""" e = economy(alpha=0.3,delta=0.03,phi=0.9,tol=0.01,TG=4,W=4,R=2)
+    gs = [gen(e,beta=0.965,sigma=2,gamma=2,tol=0.001) for y in range(e.TS)]
+    direct(e,gs) """
+
+def initialize(zeta=0.3, zeta1=0.2, W=40, R=20, alpha=0.3, delta=0.05, 
     phi=0.8, TG=4, beta=0.96, gamma=2, sigma=2, tol=0.001):
+    """Find the old and new steady states olg economies and construct a struct of 
+    economy that starts from the old and ends in the new state."""
     start_time = datetime.now()
     T = W + R
     TS = T*TG
-    """Find Old and New Steady States with zeta and zeta1"""
-    e0 = economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,zeta=zeta)
-    e1 = economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,zeta=zeta1)   
-    e0, g0 = direct(e0, generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R))
-    e1, g1 = direct(e1, generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R))
-    """Initialize Transition Dynamics of Economy for t = 0,...,TS-1"""
-    et= economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=TG,W=W,R=R,zeta=zeta1,
+    e0 = econ(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,zeta=zeta)
+    e1 = econ(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,zeta=zeta1)   
+    e0, g0 = direct(e0, gen(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R))
+    e1, g1 = direct(e1, gen(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R))
+    et= econ(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=TG,W=W,R=R,zeta=zeta1,
         Kinit=e1.K[0],Ninit=e1.N[0])
     et.K[0:TS-T] = linspace(e0.K[-1],e1.K[0],TS-T)
     et.N[0:TS-T] = linspace(e0.N[-1],e1.N[0],TS-T)
-    """Construct TS generations who die in t = 0,...,TS-1, respectively"""
-    gs = [generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R,y=t) for t in range(TS)]
-    """Iteratively Calculate all generations optimal consumption and labour supply"""
+    # print 'K0', et.K, 'N0', et.N, '\n'
+    # et.UpdatePrices()
+    # print 'r0, w0', et.r, et.w, '\n'
+    end_time = datetime.now()
+    print('Duration: {}'.format(end_time - start_time))    
+    return et, g0, g1
+
+
+def transition(et, g0, g1, N=5):
+    start_time = datetime.now()
+    T = et.W + et.R
+    TS = et.TS
+    gs = [gen(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R,y=t) for t in range(TS)]
+    for g in gs:
+        g.apath, g.cpath, g.npath, g.upath = g1.apath, g1.cpath, g1.npath, g1.upath    
     for n in range(N):
         et.UpdatePrices()
-        for g in gs:
-            if (g.y >= T-1) and (g.y <= TS-(T+1)):
-                g.IteratePaths(T, 0, et.p[:,g.y-T+1:g.y+1])
-            elif (g.y < T-1):
-                g.IteratePaths(g.y+1, g0.apath[T-g.y-1], et.p[:,:g.y+1])
+        # [r, w, tau, b] = et.p
+        # print '\n before iterate:', gs[-10].apath, gs[-22].apath
+        for t in range(-(T+1), -(TS+1), -1):
+            if t >= -(TS+1) + T:
+                # print 't, r:', t, et.p[0,t-(T-1):t+1]
+                gs[t].IteratePaths(T, 0, et.p[:,t-(T-1):t+1])
+                print gs[t].apath
+                # gs[t].IteratePaths(T, 0, [b[t-(T-1):t+1], w[t-(T-1):t+1], tau[t-(T-1):t+1], b[t-(T-1):t+1]])
+                # if t == -10:
+                #     print 'gs[-10].apath:',  gs[t].apath
             else:
-                g.apath, g.cpath, g.npath = g1.apath, g1.cpath, g1.npath
+                # print 't, a0, r:', t, g0.apath[-(TS+1)-t], et.p[0,:t+1]
+                gs[t].IteratePaths((TS+1)+t, g0.apath[-(TS+1)-t], et.p[:,:t+1])
+                # gs[t].IteratePaths((TS+1)+t, g0.apath[-(TS+1)-t], r[:t+1], w[:t+1], tau[:t+1], b[:t+1])
+                print gs[t].apath
+                # if t == -22:
+                #     print 'gs[-22].apath:',  gs[t].apath
+        # gs[-22].apath = [0 for i in range(T)]
+        print '\n before aggregate:', gs[-10].apath, gs[-22].apath
         et.Aggregate(gs)
         if et.Converged:
-            print 'Transition Path Converged! in',n+1,'iterations with tolerance level', et.tol
+            print 'Converged! in',i+1,'iterations with tolerance level', et.tol
             break
     end_time = datetime.now()
     print('Duration: {}'.format(end_time - start_time))
-    return et, gs, g0, g1
+    return et, gs
 
 
 def direct(e, g, N=40):
+    # start_time = datetime.now()
     for i in range(N):
         e.UpdatePrices()
         g.IteratePaths(e.T, 0, e.p)
         e.Aggregate(g)
         if e.Converged:
-            print 'Economy Converged to SS! in',i+1,'iterations with', e.tol
+            # print 'Converged! in',i+1,'iterations with tolerance level', e.tol
             break
+    # end_time = datetime.now()
+    # print('Duration: {}'.format(end_time - start_time))
     return e, g
+
+
+plt.close("all")
 
 
 def TransitionPath(e):
@@ -360,7 +405,7 @@ def TransitionPath(e):
     ax2 = fig.add_subplot(222)
     ax3 = fig.add_subplot(223)
     ax4 = fig.add_subplot(224)
-    fig.subplots_adjust(hspace=.5, wspace=.3, left=None, right=None, top=None, bottom=None)
+    fig.subplots_adjust(hspace=.5)
     ax.spines['top'].set_color('none')
     ax.spines['bottom'].set_color('none')
     ax.spines['left'].set_color('none')
@@ -371,7 +416,6 @@ def TransitionPath(e):
     ax3.plot(e.r)
     ax4.plot(e.w)
     ax.set_xlabel('generation')
-    ax.set_title('R:' + str(e.R) + 'W:' + str(e.W) + 'TS:' + str(e.TS), y=1.08)
     ax1.set_title('Capital')
     ax2.set_title('Labor')
     ax3.set_title('Interest Rate')
@@ -379,3 +423,10 @@ def TransitionPath(e):
     plt.show()
     # time.sleep(1)
     # plt.close() # plt.close("all")
+
+
+"""
+eco = valuemethod(N=15,R=20,W=40,aN=51) works well.
+eco = directmethod(N=50,R=20,W=40,tol=0.001,delta=0.05,alpha=0.3,beta=0.965,phi=0.9)
+eco = directmethod(N=50,R=20,W=40,tol=0.001,delta=0.05,alpha=0.3,beta=0.96,phi=0.9)
+"""
