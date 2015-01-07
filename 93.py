@@ -1,45 +1,61 @@
 """
-Jan. 2, 2015, Hyun Chang Yi
-OLG value function approximation, a Python version of Rch92AK6.g by Burkhard Heer
-This algorithm solves the Auerbach-Kotlikoff 6-period model, transition dynamics
-unexpected change in the replacement ratio of pensions from 0.3 to 0.2
-direct computation of the OLG model in section 9.1
-This code separates 'generation' class from an economy that functions 
-as firm, government and market.
-A representative generation lives for T years in the economy.
+Jan. 7, 2015, Hyun Chang Yi
+Computes the model of Section 9.3. in Heer/Maussner using 
+direct method from Secion 9.1.
+
+HOUSEHOLD'S UTILITY FUNCTION IS DIFFERENT FROM THAT OF SECTION 9.1. AND 9.2.
 """
 
 from scipy.interpolate import interp1d
 from scipy.optimize import fsolve, minimize_scalar
-from numpy import linspace, mean, array, zeros, absolute
+from numpy import linspace, mean, array, zeros, absolute, loadtxt
 from matplotlib import pyplot as plt
 from datetime import datetime
-from math import fabs, pi
 import time
-
 
 class economy:
     """ This class is just a "struct" to hold  the collection of primitives defining
     an economy in which one or multiple generations live """
-    def __init__(self, alpha=0.3, zeta=0.3, delta=0.06, phi=0.8,
-        tol=0.005, tol10=1e-10, Kinit=0.7, Ninit=0.3, TG=4, W=40, R=20):
+    def __init__(self, alpha=0.35, delta=0.08, phi=0.8,
+        tr = 0.429, tw = 0.248, zeta=0.5, gy = 0.195,
+        tol=0.005, tol10=1e-10, r0 = 0.02, k0=0.7, n0=0.3, TG=4, W=45, R=30, ng = 0.01):
+        """tr, tw and tb are tax rates on capital return, wage and tax for pension.
+        tb is determined by replacement ratio, zeta, and other endogenous variables.
+        gy is ratio of government spending over output.
+        Transfer from government to households, Tr, is determined endogenously"""
         self.alpha, self.zeta, self.delta = alpha, zeta, delta
         self.phi, self.tol, self.tol10 = phi, tol, tol10
         self.T, self.W, self.R = (W+R), W, R
         self.TS = (W+R)*TG
+        k = (alpha/(r0+delta))**(1/(1.0-alpha))
+        # market prices and pension benefit from PAYG scheme for T years
+        self.r = array([r0 for y in range(self.TS)], dtype=float)
+        self.w = array([(1-alpha)*k**alpha for y in range(self.TS)], dtype=float)
+        self.b = array([0 for y in range(self.TS)], dtype=float)
+        self.Tr = array([0 for y in range(self.TS)], dtype=float)
         # aggregate labor supply and capital
-        self.N = array([Ninit for y in range(self.TS)], dtype=float)
-        self.K = array([Kinit for y in range(self.TS)], dtype=float)
+        self.N = array([n0*W/(T*1.0) for y in range(self.TS)], dtype=float)
+        self.K = array([K0 for y in range(self.TS)], dtype=float)
+        self.k = array([k for y in range(self.TS)], dtype=float)
+        self.n = array([n0 for y in range(self.TS)], dtype=float)
+        self.y = array([k**alpha for y in range(self.TS)], dtype=float)
+        self.c = array([((1-gy)*k**alpha-delta*k)*W/(T*1.0) 
+                                for y in range(self.TS)], dtype=float)
         # tax rate that supports replacement rate zeta in PAYG
         self.zeta = array([zeta for y in range(self.TS)], dtype=float)
-        self.tau = array([self.R*zeta/(self.W+self.R*zeta) 
+        self.tr = array([tr for y in range(self.TS)], dtype=float)
+        self.tw = array([tw for y in range(self.TS)], dtype=float)
+        self.tb = array([self.R*zeta/(self.W+self.R*zeta)
                                 for y in range(self.TS)], dtype=float)
-        # market prices and pension benefit from PAYG scheme for T years
-        self.r = array([0 for y in range(self.TS)], dtype=float)
-        self.w = array([0 for y in range(self.TS)], dtype=float)
-        self.b = array([0 for y in range(self.TS)], dtype=float)
-        # container for r, w, tau, b
-        self.p = array([self.r, self.w, self.tau, self.b])
+        self.sp = loadtxt('sp.txt', delimiter='\n')
+        self.efage = loadtxt('efage.txt', delimiter='\n')
+        self.mass = [1,]
+        for i in range(T-1):
+            self.mass.append(mass[-1]*self.sp[i+1]/(1+ng))
+
+
+        # container for r, w, tb, b
+        self.p = array([self.r, self.w, self.tr, self.tw, self.tb, self.Tr, self.b])
         # whether the capital stock has converged
         self.Converged = False
 
@@ -50,7 +66,7 @@ class economy:
             K1, N1 = array([[0 for t in range(TS)] for i in range(2)], dtype=float)
             for t in range(T):
                 K1[t], N1[t] = mean(gs.apath), mean(gs.npath)
-            self.Converged = (fabs(K1[0]-self.K[0]) < self.tol*self.K[0])
+            self.Converged = (absolute(K1[0]-self.K[0]) < self.tol*self.K[0])
         else:
             # Aggregate all generations' capital and labor supply at each year
             K1, N1 = array([[0 for t in range(TS)] for i in range(2)], dtype=float)
@@ -70,26 +86,28 @@ class economy:
     def UpdatePrices(self):
         """ Update market prices, w and r, and pension benefit according to new
         aggregate capital and labor paths for years 0,...,TS from last iteration """
-        def CapitalReturn(K, N):    # interest rate is at least 0.
-            return max(self.alpha*K**(self.alpha-1)*N**(1-self.alpha)-self.delta, 0)
-        def Wage(K, N):
-            return (1 - self.alpha)*K**self.alpha*N**(-self.alpha)
-        def Benefit(zeta, tau, w, N):
-            return zeta*(1 - tau)*w*N*self.T/(self.W*1.0)
+        def CapitalReturn(k):    # interest rate is at least 0.
+            return max(self.alpha*k**(self.alpha-1)-self.delta, 0)
+        def Wage(k):
+            return (1 - self.alpha)*k**self.alpha
+        def Benefit(zeta, tb, w, N):
+            return zeta*(1 - tb)*w*N*self.T/(self.W*1.0)
+
         self.w = array([Wage(self.K[t], self.N[t]) 
                                         for t in range(self.TS)], dtype=float)
         self.r = array([CapitalReturn(self.K[t], self.N[t]) 
                                         for t in range(self.TS)], dtype=float)
-        self.b = array([Benefit(self.zeta[t], self.tau[t], self.w[t], self.N[t])
+        self.b = array([Benefit(self.zeta[t], self.tb[t], self.w[t], self.N[t])
                                         for t in range(self.TS)], dtype=float)
-        self.p = array([self.r, self.w, self.tau, self.b])
+        self.p = array([self.r, self.w, self.tb, self.b])
 
 
 class generation:
     """ This class is just a "struct" to hold the collection of primitives defining
     a generation """
-    def __init__(self, beta=0.96, sigma=2.0, gamma=2.0, aH=5, aL=0, y=0,
-        aN=51, Nq=50, psi=0.001, tol=0.005, tol10=1e-10, neg=-1e10, W=40, R=20):
+    def __init__(self, beta=0.96, sigma=2.0, gamma=0.32, aH=5, aL=0, y=0,
+        aN=51, Nq=50, psi=0.001, tol=0.005, tol10=1e-10, neg=-1e10, W=40, R=20,
+        ng = 0.01):
         self.beta, self.sigma, self.gamma, self.psi = beta, sigma, gamma, psi
         self.R, self.W, self.T, self.y = R, W, W + R, y
         self.aH, self.aL, self.aN, self.aa = aH, aL, aN, linspace(aL,aH,aN)
@@ -110,98 +128,13 @@ class generation:
         self.upath = array([0 for y in range(self.T)], dtype=float)
 
 
-    def IterateValues(self, p):
-        """ Given prices r, w, tau and b over one's life-cycle, value and decision 
-        functions are calculated ***BACKWARD*** """
-        [r, w, tau, b] = p
-        # y = -1 : the oldest generation
-        for l in range(self.aN):
-            self.c[-1][l] = self.aa[l]*(1 + r[-1]) + b[-1]
-            self.v[-1][l] = self.util(self.c[-1][l], 0)
-        self.vtilde[-1] = interp1d(self.aa, self.v[-1], kind='cubic')
-        # y = -2, -3,..., -60
-        for y in range(-2, -(self.T+1), -1):
-            m0 = 0
-            for i in range(self.aN):    # l = 0, 1, ..., 50
-                # Find a bracket within which optimal a' lies
-                m = max(0, m0)  # Rch91v.g uses m = max(0, m0-1)
-                m0, a, b, c = self.GetBracket(y, i, m, p)
-                # Find optimal a' using Golden Section Search
-                if a == b:
-                    self.a[y][i] = 0
-                elif b == c:
-                    self.a[y][i] = self.aa[-1]
-                else:
-                    def objfn(a1): # Define objective function for optimal a'
-                        return -self.OptimalValue(y, self.aa[i], a1, p)
-                    result = minimize_scalar(objfn, bracket=(a,b,c), method='Golden')
-                    #‘Brent’,‘Bounded’,‘Golden’
-                    self.a[y][i] = result.x
-                # Computing consumption and labor
-                if y >= -self.R:
-                    self.c[y][i] = (1 + r[y])*self.aa[i] + b[y] - self.a[y][i]
-                    self.n[y][i] = 0
-                else:
-                    self.c[y][i], self.n[y][i] = self.SolveForCN(y, self.aa[i],
-                                                        self.a[y][i], p)
-                self.v[y][i] = self.util(self.c[y][i], self.n[y][i]) \
-                                + self.beta*self.vtilde[y+1](self.a[y][i])
-            self.vtilde[y] = interp1d(self.aa, self.v[y], kind='cubic')
-
-
-    def GetBracket(self, y, l, m, p):
-        """ Find a bracket (a,b,c) such that policy function for next period asset level, 
-        a[x;asset[l],y] lies in the interval (a,b) """
-        [r, w, tau, b] = p
-        aa = self.aa
-        a, b, c = aa[0], aa[0]-aa[1], aa[0]-aa[2]
-        m0 = m
-        v0 = self.neg
-        while (a > b) or (b > c):
-            v1 = self.OptimalValue(y, aa[l], aa[m], p)
-            if v1 > v0:
-                if m == 0:
-                    a, b = aa[m], aa[m]
-                else:
-                    b, a = aa[m], aa[m-1]
-                v0, m0 = v1, m
-            else:
-                c = aa[m]
-            if m == self.aN - 1:
-                a, b, c = aa[m-1], aa[m], aa[m]
-            m = m + 1
-        return m0, a, b, c
-
-
-    def PathsFromValues(self, p):
-        """ Compute the aggregate capital stock and employment, K and N **FORWARD**
-        """
-        [r, w, tau, b] = p
-        self.apath[0] = 0
-        # generate each generation's asset, consumption and labor supply forward
-        for y in range(self.T-1):    # y = 0, 1,..., 58
-            self.apath[y+1] = self.clip(interp1d(self.aa, self.a[y],
-                                                kind='cubic')(self.apath[y]))
-            if y >= self.W:
-                self.cpath[y] = (1 + r[y])*self.apath[y] + b[y] - self.apath[y+1]
-                self.npath[y] = 0
-            else:
-                self.cpath[y], self.npath[y] = self.SolveForCN(y, self.apath[y], 
-                                                        self.apath[y+1], p)
-            self.upath[y] = self.util(self.cpath[y], self.npath[y])
-        # the oldest generation's consumption and labor supply
-        self.cpath[self.T-1] = (1 + r[y])*self.apath[self.T-1] + b[y]
-        self.npath[self.T-1] = 0
-        self.upath[self.T-1] = self.util(self.cpath[self.T-1], self.npath[self.T-1])
-
-
     def clip(self, a):
         return self.aL if a <= self.aL else self.aH if a >= self.aH else a
 
 
     def util(self, c, n):
         # calculate utility value with given consumption and labor
-        return (((c+self.psi)*(1-n)**self.gamma)**(1-self.sigma)-1)/(1-self.sigma*1.0)
+        return ((c**self.gamma*(1-n)**(1-self.gamma))**(1-self.sigma))/(1-self.sigma*1.0)
 
 
     def uc(self, c, n):
@@ -218,7 +151,7 @@ class generation:
         """ This function numerically finds optimal choices over RT years,
         from T-RT+1 to T yrs-old such that asset level at T-RT+1 equals to a0,
         which is the amount of asset that T-RT+1 yrs-old agent holds in the old SS. """
-        [r, w, tau, b] = p
+        [r, w, tb, b] = p
         if RT == 1:
             self.apath[-1] = a0
             self.cpath[-1] = self.apath[-1]*(1 + r[-1]) + b[-1]
@@ -239,7 +172,7 @@ class generation:
                     self.apath[y], self.npath[y], self.cpath[y] = self.DirectSolve(y, p)
                 aT.append(self.apath[-1])
                 a1.append(self.apath[-RT])
-                if (fabs(self.apath[-RT] - a0) < self.tol):
+                if (absolute(self.apath[-RT] - a0) < self.tol):
                     break
             for y in range(-1, -(RT+1), -1):
                 self.upath[y] = self.util(self.cpath[y], self.npath[y])
@@ -249,7 +182,7 @@ class generation:
     def DirectSolve(self, y, p):
         """ analytically solve for capital and labor supply given next two periods 
         capital. y is from -2 to -60, i.e., through the next-to-last to the first """
-        [r, w, tau, b] = p
+        [r, w, tb, b] = p
         # print y, p.shape
         if y >= -self.R:
             a1 = self.apath[y+1]
@@ -267,13 +200,13 @@ class generation:
                 c1 = (1 + r[y+1])*a1 + b[y+1] - a2
             else:
                 n1 = self.npath[y+1]
-                c1 = (1 + r[y+1])*a1 + (1 - tau[y+1])*w[y+1]*n1 - a2
+                c1 = (1 + r[y+1])*a1 + (1 - tb[y+1])*w[y+1]*n1 - a2
             def foc((a0,n0)):   # FOC for the workers
-                c0 = (1 + r[y])*a0 + (1 - tau[y])*w[y]*n0 - a1
+                c0 = (1 + r[y])*a0 + (1 - tb[y])*w[y]*n0 - a1
                 return self.uc(c0,n0) - self.beta*self.uc(c1,n1)*(1 + r[y+1]),\
-                    (1 - tau[y])*w[y]*self.uc(c0,n0) + self.un(c0,n0)
+                    (1 - tb[y])*w[y]*self.uc(c0,n0) + self.un(c0,n0)
             a, n = fsolve(foc,(a1,n1))
-            c = (1 + r[y])*a + (1 - tau[y])*w[y]*n - a1
+            c = (1 + r[y])*a + (1 - tb[y])*w[y]*n - a1
         return a, n, c
 
 
@@ -282,11 +215,11 @@ class generation:
         corresponding consumption and labor supply when the agent chooses his 
         next period asset a1, current period consumption c and labor n
         a1 is always within aL and aH """
-        [r, w, tau, b] = p
+        [r, w, tb, b] = p
         if y >= -self.R:    # y = -2, -3, ..., -60
             c, n = (1 + r[y])*a0 + b[y] - a1, 0
         else:
-            c, n = self.SolveForCN(y, a0, a1, r, w, tau, b)
+            c, n = self.SolveForCN(y, a0, a1, r, w, tb, b)
         v = self.util(c,n) + self.beta*self.vtilde[y + 1](a1)
         return v if c >= 0 else self.neg
 
@@ -294,10 +227,10 @@ class generation:
     def SolveForCN(self, y, a0, a1, p):
         """ Given economy E.prices and next two periods' asset levels
         a generation optimizes on consumption and labor supply at year y """
-        [r, w, tau, b] = p
+        [r, w, tb, b] = p
         def foc((c,n)):
-            return (1 + r[y])*a0+(1 - tau[y])*w[y]*n - a1 - c,\
-                (1 - tau[y])*w[y]*self.uc(c,n) + self.un(c,n)
+            return (1 + r[y])*a0+(1 - tb[y])*w[y]*n - a1 - c,\
+                (1 - tb[y])*w[y]*self.uc(c,n) + self.un(c,n)
         c, n = fsolve(foc,(0.3,0.3))
         return c, n
 
@@ -306,6 +239,11 @@ class generation:
 The following are procedures to get steady state of the economy using direct 
 age-profile iteration and projection method
 """
+
+
+sp2 = loadtxt('sp2.txt', delimiter='\n')
+efage = loadtxt('efage.txt', delimiter='\n')
+
 
 def transition(zeta=0.3, zeta1=0.2, N=40, W=40, R=20, alpha=0.3, delta=0.05, 
     phi=0.8, TG=4, beta=0.96, gamma=2, sigma=2, tol=0.001):
@@ -352,6 +290,8 @@ def direct(e, g, N=40):
             print 'Economy Converged to SS! in',i+1,'iterations with', e.tol
             break
     return e, g
+
+
 
 
 def TransitionPath(e):
