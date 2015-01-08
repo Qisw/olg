@@ -8,7 +8,7 @@ HOUSEHOLD'S UTILITY FUNCTION IS DIFFERENT FROM THAT OF SECTION 9.1. AND 9.2.
 
 from scipy.interpolate import interp1d
 from scipy.optimize import fsolve, minimize_scalar
-from numpy import linspace, mean, array, zeros, absolute, loadtxt
+from numpy import linspace, mean, array, zeros, absolute, loadtxt, dot, prod
 from matplotlib import pyplot as plt
 from datetime import datetime
 import time
@@ -16,115 +16,143 @@ import time
 class economy:
     """ This class is just a "struct" to hold  the collection of primitives defining
     an economy in which one or multiple generations live """
-    def __init__(self, alpha=0.35, delta=0.08, phi=0.8,
+    def __init__(self, alpha=0.35, delta=0.08, phi=0.8, tol=0.005, tol10=1e-10,
         tr = 0.429, tw = 0.248, zeta=0.5, gy = 0.195,
-        tol=0.005, tol10=1e-10, r0 = 0.02, k0=0.7, n0=0.3, TG=4, W=45, R=30, ng = 0.01):
+        r = 0.02, k=0.7, l=0.3, TG=4, W=45, R=30, ng = 0.01):
         """tr, tw and tb are tax rates on capital return, wage and tax for pension.
         tb is determined by replacement ratio, zeta, and other endogenous variables.
         gy is ratio of government spending over output.
         Transfer from government to households, Tr, is determined endogenously"""
         self.alpha, self.zeta, self.delta = alpha, zeta, delta
         self.phi, self.tol, self.tol10 = phi, tol, tol10
-        self.T, self.W, self.R = (W+R), W, R
-        self.TS = (W+R)*TG
-        k = (alpha/(r0+delta))**(1/(1.0-alpha))
-        # market prices and pension benefit from PAYG scheme for T years
-        self.r = array([r0 for y in range(self.TS)], dtype=float)
-        self.w = array([(1-alpha)*k**alpha for y in range(self.TS)], dtype=float)
-        self.b = array([0 for y in range(self.TS)], dtype=float)
-        self.Tr = array([0 for y in range(self.TS)], dtype=float)
-        # aggregate labor supply and capital
-        self.N = array([n0*W/(T*1.0) for y in range(self.TS)], dtype=float)
-        self.K = array([K0 for y in range(self.TS)], dtype=float)
-        self.k = array([k for y in range(self.TS)], dtype=float)
-        self.n = array([n0 for y in range(self.TS)], dtype=float)
-        self.y = array([k**alpha for y in range(self.TS)], dtype=float)
-        self.c = array([((1-gy)*k**alpha-delta*k)*W/(T*1.0) 
-                                for y in range(self.TS)], dtype=float)
-        # tax rate that supports replacement rate zeta in PAYG
-        self.zeta = array([zeta for y in range(self.TS)], dtype=float)
-        self.tr = array([tr for y in range(self.TS)], dtype=float)
-        self.tw = array([tw for y in range(self.TS)], dtype=float)
-        self.tb = array([self.R*zeta/(self.W+self.R*zeta)
-                                for y in range(self.TS)], dtype=float)
+        self.W, self.R = W, R
+        self.T = T = (W+R)
+        self.TS = TS = (W+R)*TG
         self.sp = loadtxt('sp.txt', delimiter='\n')
-        self.efage = loadtxt('efage.txt', delimiter='\n')
-        self.mass = [1,]
-        for i in range(T-1):
-            self.mass.append(mass[-1]*self.sp[i+1]/(1+ng))
-
-
+        self.ef = loadtxt('ef.txt', delimiter='\n')
+        """populations of each cohort with and without early death
+                                pop[t][y] is the number of y-yrs-old agents in t"""
+        self.mass = array([prod(sp[0:t+1])/(1+ng)**t for t in range(T)], dtype=float)
+        self.mass0 = array([1/(1+ng)**t for t in range(T)], dtype=float)
+        self.pop = array([self.mass*(1+ng)**t for t in range(TS)], dtype=float)
+        self.pop0 = array([self.mass0*(1+ng)**t for t in range(TS)], dtype=float)
+        """populations of workers and non-workers when the number of 1-yrs-old workers
+                                is normailsed to 1"""
+        self.Pw = Pw = sum([self.mass[t] for t in range(0,W)])
+        self.Pr = Pr = sum([self.mass[t] for t in range(W,T)])
+        self.Pt = Pt = Pw + Pr
+        """Initialize variables"""
+        L = sum([ef[t]*self.mass[t]*l for t in range(W)]) # aggregate effcient labor
+        k = (alpha/(r+delta))**(1/(1-alpha))  # capital per 1 unit of efficient labor
+        K = k*L                                 # aggregate capital
+        w = (1-alpha)*k**alpha
+        y = k**alpha
+        Beq = (k*L/Pt)*(sum(self.mass0)-sum(self.mass)) # aggregate Bequest
+        tb = zeta*(1-tw)*Pr/(L+zeta*Pr)          # pension contribution
+        b = zeta*(1-tw-tb)*w                               # pension benefit
+        Tax = tw*w*L+tr*r*(k*L)                              # aggregate Tax income
+        G = gy*y*L                                    # aggregate Govt. expenditure
+        Tr = (Tax+Beq-G)/Pt        # per-capita Transfer
+        """Construct containers for market prices, tax rates, transfers, aggregate variables"""
+        self.tr = array([tr for t in range(TS)], dtype=float)
+        self.tw = array([tw for t in range(TS)], dtype=float)
+        self.gy = array([gy for t in range(TS)], dtype=float)
+        self.L = array([L for t in range(TS)], dtype=float)
+        self.K = array([K for t in range(TS)], dtype=float)
+        self.Beq = array([Beq for t in range(TS)], dtype=float)
+        self.k = array([k for t in range(TS)], dtype=float)
+        self.y = array([y for t in range(TS)], dtype=float)
+        self.r = array([r for t in range(TS)], dtype=float)
+        self.w = array([w for t in range(TS)], dtype=float)
+        self.tb = array([tb for t in range(TS)], dtype=float)
+        self.b = array([b for t in range(TS)], dtype=float)
+        self.Tax = array([Tax for t in range(TS)], dtype=float)
+        self.G = array([G for t in range(TS)], dtype=float)
+        self.Tr = array([Tr for t in range(TS)], dtype=float)
         # container for r, w, tb, b
-        self.p = array([self.r, self.w, self.tr, self.tw, self.tb, self.Tr, self.b])
+        self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr])
         # whether the capital stock has converged
         self.Converged = False
 
 
     def Aggregate(self, gs):
+        """Aggregate Capital, Labor in Efficiency unit and Bequest over all cohorts"""
         W, T, TS = self.W, self.T, self.TS
         if TS == T:
-            K1, N1 = array([[0 for t in range(TS)] for i in range(2)], dtype=float)
+            K1, L1 = array([[0 for t in range(TS)] for i in range(2)], dtype=float)
             for t in range(T):
-                K1[t], N1[t] = mean(gs.apath), mean(gs.npath)
-            self.Converged = (absolute(K1[0]-self.K[0]) < self.tol*self.K[0])
+                K1[t] = sum([gs.apath[y]*self.mass[y] for y in range(T)])
+                L1[t] = sum([gs.lpath[y]*self.mass[y]*self.ef[y] for y in range(T)])
+                """worker's labor supply is product of working hour and efficiency"""
+                self.Beq[t] = sum([gs.apath[y]*self.mass0[y]-gs.apath[y]*self.mass[y]
+                                        for y in range(T)])
         else:
-            # Aggregate all generations' capital and labor supply at each year
-            K1, N1 = array([[0 for t in range(TS)] for i in range(2)], dtype=float)
+            """Aggregate all generations' capital and labor supply at each year"""
+            K1, L1 = array([[0 for t in range(TS)] for i in range(2)], dtype=float)
             for t in range(TS):
                 if t <= TS-T-1:
-                    K1[t] = mean([gs[t+y].apath[-(y+1)] for y in range(T)])
-                    N1[t] = mean([gs[t+y].npath[-(y+1)] for y in range(T)])
+                    K1[t] = sum([gs[t+y].apath[-(y+1)]*self.pop[t][-(y+1)]
+                                    for y in range(T)])
+                    L1[t] = sum([gs[t+y].lpath[-(y+1)]*self.pop[t][-(y+1)]
+                                    *self.ef[-(y+1)] for y in range(T)])
+                    self.Beq[t] = sum([(gs[t+y].apath[-(y+1)]*self.pop0[t][-(y+1)]-
+                                            gs[t+y].apath[-(y+1)]*self.pop[t][-(y+1)])
+                                                for y in range(T)])
                 else:
-                    K1[t] = mean([gs[TS-T].apath[-(y+1)] for y in range(T)])
-                    N1[t] = mean([gs[TS-T].npath[-(y+1)] for y in range(T)])
-            self.Converged = (sum(absolute(K1-self.K)) < self.tol)
-            """ Update the economy's aggregate K and N with weight phi on the old """
+                    K1[t] = sum([gs[TS-T].apath[-(y+1)]*self.pop[t][-(y+1)]
+                                    for y in range(T)])
+                    L1[t] = sum([gs[TS-T].lpath[-(y+1)]*self.pop[t][-(y+1)]
+                                    *self.ef[-(y+1)] for y in range(T)])
+                    self.Beq[t] = sum([(gs[TS-T].apath[-(y+1)]*self.pop0[t][-(y+1)]-
+                                            gs[TS-T].apath[-(y+1)]*self.pop[t][-(y+1)])
+                                                for y in range(T)])
+        self.Converged = (max(absolute(K1-self.K)) < self.tol)
+        """ Update the economy's aggregate K and N with weight phi on the old """
         self.K = self.phi*self.K + (1-self.phi)*K1
-        self.N = self.phi*self.N + (1-self.phi)*N1
+        self.L = self.phi*self.L + (1-self.phi)*L1
 
 
-    def UpdatePrices(self):
-        """ Update market prices, w and r, and pension benefit according to new
+    def UpdateStates(self):
+        """ Update market prices, w and r, and many others according to new
         aggregate capital and labor paths for years 0,...,TS from last iteration """
-        def CapitalReturn(k):    # interest rate is at least 0.
-            return max(self.alpha*k**(self.alpha-1)-self.delta, 0)
-        def Wage(k):
-            return (1 - self.alpha)*k**self.alpha
-        def Benefit(zeta, tb, w, N):
-            return zeta*(1 - tb)*w*N*self.T/(self.W*1.0)
-
-        self.w = array([Wage(self.K[t], self.N[t]) 
-                                        for t in range(self.TS)], dtype=float)
-        self.r = array([CapitalReturn(self.K[t], self.N[t]) 
-                                        for t in range(self.TS)], dtype=float)
-        self.b = array([Benefit(self.zeta[t], self.tb[t], self.w[t], self.N[t])
-                                        for t in range(self.TS)], dtype=float)
-        self.p = array([self.r, self.w, self.tb, self.b])
+        for t in range(TS):
+            self.k[t] = self.K[t]/self.L[t]
+            self.y[t] = self.k[t]**alpha
+            self.r[t] = self.alpha*self.k[t]**(self.alpha-1)-self.delta
+            self.w[t] = (1-self.alpha)*self.k[t]**self.alpha
+            self.Tax[t] = self.tw[t]*self.w[t]*self.L[t] + self.tr[t]*self.r[t]*self.K[t]
+            self.G[t] = self.gy[t]*self.y[t]*self.L[t]
+            self.Tr[t] = (self.Tax[t] + self.Beq[t] - self.G[t])/self.Pt
+            self.tb[t] = self.zeta*(1-self.tw[t])*self.Pr/(self.L[t]+self.zeta*self.Pr)
+            self.b[t] = self.zeta[t]*(1-self.tw[t]-self.tb[t])*self.w[t]
+        self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr])
 
 
 class generation:
     """ This class is just a "struct" to hold the collection of primitives defining
     a generation """
-    def __init__(self, beta=0.96, sigma=2.0, gamma=0.32, aH=5, aL=0, y=0,
-        aN=51, Nq=50, psi=0.001, tol=0.005, tol10=1e-10, neg=-1e10, W=40, R=20,
+    def __init__(self, beta=0.96, sigma=2.0, gamma=0.32, aH=5.0, aL=0.0, y=0,
+        aN=51, Nq=50, psi=0.001, tol=0.005, tol10=1e-10, neg=-1e10, W=45, R=30,
         ng = 0.01):
         self.beta, self.sigma, self.gamma, self.psi = beta, sigma, gamma, psi
         self.R, self.W, self.T, self.y = R, W, W + R, y
         self.aH, self.aL, self.aN, self.aa = aH, aL, aN, linspace(aL,aH,aN)
         self.tol, self.tol10, self.Nq, self.neg = tol, tol10, Nq, neg
+        self.sp = loadtxt('sp.txt', delimiter='\n')
+        self.ef = loadtxt('ef.txt', delimiter='\n')        
         """ value function and its interpolation """
         self.v = array([[0 for l in range(self.aN)] for y in range(self.T)], dtype=float)
         self.vtilde = [[] for y in range(self.T)]
         """ policy functions used in value function method """
         self.a = array([[0 for l in range(self.aN)] for y in range(self.T)], dtype=float)
         self.c = array([[0 for l in range(self.aN)] for y in range(self.T)], dtype=float)
-        self.n = array([[0 for l in range(self.aN)] for y in range(self.T)], dtype=float)
+        self.l = array([[0 for l in range(self.aN)] for y in range(self.T)], dtype=float)
         """ the following paths for a, c, n and u are used in direct and value function methods
         In direct method, those paths are directly calculated, while in the value function
         method the paths are calculated from value and policy functions """
         self.apath = array([0 for y in range(self.T)], dtype=float)
         self.cpath = array([0 for y in range(self.T)], dtype=float)
-        self.npath = array([0 for y in range(self.T)], dtype=float)
+        self.lpath = array([0 for y in range(self.T)], dtype=float)
         self.upath = array([0 for y in range(self.T)], dtype=float)
 
 
@@ -132,31 +160,31 @@ class generation:
         return self.aL if a <= self.aL else self.aH if a >= self.aH else a
 
 
-    def util(self, c, n):
+    def util(self, c, l):
         # calculate utility value with given consumption and labor
-        return ((c**self.gamma*(1-n)**(1-self.gamma))**(1-self.sigma))/(1-self.sigma*1.0)
+        return ((c**self.gamma*(1-l)**(1-self.gamma))**(1-self.sigma))/(1-self.sigma)
 
 
-    def uc(self, c, n):
+    def uc(self, c, l):
         # marginal utility w.r.t. consumption
-        return (c+self.psi)**(-self.sigma)*(1-n)**(self.gamma*(1-self.sigma))
+        return self.gamma*self.util(c, l)*(1-self.sigma)/(c*1.0)
 
 
-    def un(self, c, n):
+    def ul(self, c, l):
         # marginal utility w.r.t. labor
-        return -self.gamma*(c+self.psi)**(1-self.sigma)*(1-n)**(self.gamma*(1-self.sigma)-1)
+        return -(1-self.gamma)*self.util(c, l)*(1-self.sigma)/(1-l)
 
 
     def IteratePaths(self, RT, a0, p):
         """ This function numerically finds optimal choices over RT years,
         from T-RT+1 to T yrs-old such that asset level at T-RT+1 equals to a0,
         which is the amount of asset that T-RT+1 yrs-old agent holds in the old SS. """
-        [r, w, tb, b] = p
+        [r, w, b, tr, tw, tb, Tr] = p
         if RT == 1:
             self.apath[-1] = a0
-            self.cpath[-1] = self.apath[-1]*(1 + r[-1]) + b[-1]
-            self.npath[-1] = 0
-            self.upath[-1] = self.util(self.cpath[-1], self.npath[-1])
+            self.cpath[-1] = self.apath[-1]*(1+(1-tr[-1])*r[-1]) + Tr[-1] + b[-1]
+            self.lpath[-1] = 0
+            self.upath[-1] = self.util(self.cpath[-1], self.lpath[-1])
         else:
             a1, aT = [-1,], []
             for q in range(self.Nq):
@@ -166,73 +194,52 @@ class generation:
                     self.apath[-1] = 0.3
                 else:
                     self.apath[-1] = self.clip(aT[-1]-(aT[-1]-aT[-2])*(a1[-1]-a0)/(a1[-1]-a1[-2]))
-                self.npath[-1] = 0
-                self.cpath[-1] = self.apath[-1]*(1 + r[-1]) + b[-1]
+                self.lpath[-1] = 0
+                self.cpath[-1] = self.apath[-1]*(1+(1-tr[-1])*r[-1]) + Tr[-1] + b[-1]
                 for y in range(-2,-(RT+1),-1):     # y = -2, -3,..., -RT
-                    self.apath[y], self.npath[y], self.cpath[y] = self.DirectSolve(y, p)
+                    self.apath[y], self.lpath[y], self.cpath[y] = self.DirectSolve(y, p)
                 aT.append(self.apath[-1])
                 a1.append(self.apath[-RT])
                 if (absolute(self.apath[-RT] - a0) < self.tol):
                     break
-            for y in range(-1, -(RT+1), -1):
-                self.upath[y] = self.util(self.cpath[y], self.npath[y])
-        return self.apath, self.cpath, self.npath, self.upath
+            for y in range(-1,-(RT+1),-1):
+                self.upath[y] = self.util(self.cpath[y], self.lpath[y])
+        return self.apath, self.cpath, self.lpath, self.upath
 
 
     def DirectSolve(self, y, p):
         """ analytically solve for capital and labor supply given next two periods 
         capital. y is from -2 to -60, i.e., through the next-to-last to the first """
-        [r, w, tb, b] = p
+        [r, w, b, tr, tw, tb, Tr] = p
         # print y, p.shape
         if y >= -self.R:
             a1 = self.apath[y+1]
             a2 = (0 if y == -2 else self.apath[y+2])
-            def foc(a):         # FOC for the retired
-                c0 = (1 + r[y])*a + b[y] - a1
-                c1 = (1 + r[y+1])*a1 + b[y+1] - a2
-                return self.uc(c0,0) - self.beta*self.uc(c1,0)*(1 + r[y+1])
-            a, n = fsolve(foc, a1), 0
-            c = (1 + r[y])*a + b[y] - a1
+            def foc(a0):         # FOC for the retired
+                c0 = (1+(1-tr[y])*r[y])*a0 + b[y] + Tr[y] - a1
+                c1 = (1+(1-tr[y+1])*r[y+1])*a1 + b[y+1] + Tr[y+1] - a2
+                return (self.beta*self.sp[y+1]*self.uc(c1,0)*(1+(1-tr[y+1])*r[y+1])
+                         - self.uc(c0,0))
+            a = fsolve(foc, a1)
+            l = 0
+            c = (1+(1-tr[y])*r[y])*a + b[y] + Tr[y] - a1
         else:
             a1, a2 = self.apath[y+1], self.apath[y+2]
             if y == -(self.R+1):
-                n1 = 0
-                c1 = (1 + r[y+1])*a1 + b[y+1] - a2
+                l1 = 0
+                c1 = (1+(1-tr[y+1])*r[y+1])*a1 + b[y+1] + Tr[y+1] - a2
             else:
-                n1 = self.npath[y+1]
-                c1 = (1 + r[y+1])*a1 + (1 - tb[y+1])*w[y+1]*n1 - a2
-            def foc((a0,n0)):   # FOC for the workers
-                c0 = (1 + r[y])*a0 + (1 - tb[y])*w[y]*n0 - a1
-                return self.uc(c0,n0) - self.beta*self.uc(c1,n1)*(1 + r[y+1]),\
-                    (1 - tb[y])*w[y]*self.uc(c0,n0) + self.un(c0,n0)
-            a, n = fsolve(foc,(a1,n1))
-            c = (1 + r[y])*a + (1 - tb[y])*w[y]*n - a1
-        return a, n, c
-
-
-    def OptimalValue(self, y, a0, a1, p):
-        """ Return the value at the given generation and asset a0 and 
-        corresponding consumption and labor supply when the agent chooses his 
-        next period asset a1, current period consumption c and labor n
-        a1 is always within aL and aH """
-        [r, w, tb, b] = p
-        if y >= -self.R:    # y = -2, -3, ..., -60
-            c, n = (1 + r[y])*a0 + b[y] - a1, 0
-        else:
-            c, n = self.SolveForCN(y, a0, a1, r, w, tb, b)
-        v = self.util(c,n) + self.beta*self.vtilde[y + 1](a1)
-        return v if c >= 0 else self.neg
-
-
-    def SolveForCN(self, y, a0, a1, p):
-        """ Given economy E.prices and next two periods' asset levels
-        a generation optimizes on consumption and labor supply at year y """
-        [r, w, tb, b] = p
-        def foc((c,n)):
-            return (1 + r[y])*a0+(1 - tb[y])*w[y]*n - a1 - c,\
-                (1 - tb[y])*w[y]*self.uc(c,n) + self.un(c,n)
-        c, n = fsolve(foc,(0.3,0.3))
-        return c, n
+                l1 = self.lpath[y+1]
+                c1 = ((1-tw[y+1]-tb[y+1])*w[y+1]*self.ef[y+1]*l1 + Tr[y+1] - a2
+                         + (1+(1-tr[y+1])*r[y+1])*a1)
+            def foc((a0, l0)):   # FOC for the workers
+                c0 = (1 + (1-tr[y])*r[y])*a0 + (1-tw[y]-tb[y])*w[y]*self.ef[y]*l0 - a1
+                return (1-tw[y]-tb[y])*w[y]*self.ef[y]*self.uc(c0,l0) + self.ul(c0,l0), \
+                        (self.beta*self.sp[y+1]*self.uc(c1,l1)*(1+(1-tr[y+1])*r[y+1])
+                         - self.uc(c0,l0))
+            a, l = fsolve(foc,(a1,l1))
+            c = (1 + (1-tr[y])*r[y])*a + (1-tw[y]-tb[y])*w[y]*ef[y]*l + Tr[y] - a1
+        return a, l, c
 
 
 """
@@ -241,37 +248,34 @@ age-profile iteration and projection method
 """
 
 
-sp2 = loadtxt('sp2.txt', delimiter='\n')
-efage = loadtxt('efage.txt', delimiter='\n')
-
-
-def transition(zeta=0.3, zeta1=0.2, N=40, W=40, R=20, alpha=0.3, delta=0.05, 
-    phi=0.8, TG=4, beta=0.96, gamma=2, sigma=2, tol=0.001):
+def transition(zeta=0.3, ng=0.01, ng1=0.0, N=3, W=45, R=30, alpha=0.35, delta=0.06, 
+    phi=0.8, TG=4, beta=0.96, gamma=0.35, sigma=2.0, tol=0.001):
     start_time = datetime.now()
     T = W + R
     TS = T*TG
-    """Find Old and New Steady States with zeta and zeta1"""
-    e0 = economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,zeta=zeta)
-    e1 = economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,zeta=zeta1)   
+    """Find Old and New Steady States with population growth rates ng and ng1"""
+    e0 = economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,ng=ng)
+    e1 = economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,ng=ng1)   
     e0, g0 = direct(e0, generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R))
     e1, g1 = direct(e1, generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R))
     """Initialize Transition Dynamics of Economy for t = 0,...,TS-1"""
-    et= economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=TG,W=W,R=R,zeta=zeta1,
+    et= economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=TG,W=W,R=R,ng=ng1,
         Kinit=e1.K[0],Ninit=e1.N[0])
     et.K[0:TS-T] = linspace(e0.K[-1],e1.K[0],TS-T)
-    et.N[0:TS-T] = linspace(e0.N[-1],e1.N[0],TS-T)
+    et.L[0:TS-T] = linspace(e0.L[-1],e1.L[0],TS-T)
     """Construct TS generations who die in t = 0,...,TS-1, respectively"""
-    gs = [generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R,y=t) for t in range(TS)]
+    gs = [generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R,y=t)
+            for t in range(TS)]
     """Iteratively Calculate all generations optimal consumption and labour supply"""
     for n in range(N):
-        et.UpdatePrices()
+        et.UpdateStates()
         for g in gs:
             if (g.y >= T-1) and (g.y <= TS-(T+1)):
                 g.IteratePaths(T, 0, et.p[:,g.y-T+1:g.y+1])
             elif (g.y < T-1):
                 g.IteratePaths(g.y+1, g0.apath[T-g.y-1], et.p[:,:g.y+1])
             else:
-                g.apath, g.cpath, g.npath = g1.apath, g1.cpath, g1.npath
+                g.apath, g.cpath, g.lpath = g1.apath, g1.cpath, g1.lpath
         et.Aggregate(gs)
         if et.Converged:
             print 'Transition Path Converged! in',n+1,'iterations with tolerance level', et.tol
@@ -281,17 +285,15 @@ def transition(zeta=0.3, zeta1=0.2, N=40, W=40, R=20, alpha=0.3, delta=0.05,
     return et, gs, g0, g1
 
 
-def direct(e, g, N=40):
+def direct(e, g, N=50):
     for i in range(N):
-        e.UpdatePrices()
+        e.UpdateStates()
         g.IteratePaths(e.T, 0, e.p)
         e.Aggregate(g)
         if e.Converged:
             print 'Economy Converged to SS! in',i+1,'iterations with', e.tol
             break
     return e, g
-
-
 
 
 def TransitionPath(e):
