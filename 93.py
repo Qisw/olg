@@ -30,7 +30,7 @@ class world:
         self.T = T = (W+R)
         self.TS = TS = (W+R)*TG
         self.sp = sp = loadtxt('sp.txt', delimiter='\n')
-        self.ef = ef = loadtxt('ef1.txt', delimiter='\n')
+        self.ef = ef = loadtxt('ef.txt', delimiter='\n')
         """populations of each cohort with and without early death
                                 pop[t][y] is the number of y-yrs-old agents in t"""
         self.mass = array([prod(sp[0:t+1])/(1+ng)**t for t in range(T)], dtype=float)
@@ -136,7 +136,7 @@ class world:
 class cohort:
     """ This class is just a "struct" to hold the collection of primitives defining
     a generation """
-    def __init__(self, beta=0.96, sigma=2.0, gamma=0.4, aH=5.0, aL=0.0, y=100,
+    def __init__(self, beta=0.99, sigma=2.0, gamma=0.32, aH=5.0, aL=0.0, y=100,
         aN=51, Nq=50, psi=0.001, tol=0.005, tol10=1e-10, neg=-1e10, W=45, R=30,
         ng = 0.01, a0 = 0):
         self.beta, self.sigma, self.gamma, self.psi = beta, sigma, gamma, psi
@@ -146,7 +146,7 @@ class cohort:
         self.a0 = a0
         self.tol, self.tol10, self.Nq, self.neg = tol, tol10, Nq, neg
         self.sp = loadtxt('sp.txt', delimiter='\n')
-        self.ef = loadtxt('ef1.txt', delimiter='\n')
+        self.ef = loadtxt('ef.txt', delimiter='\n')
         """ value function and its interpolation """
         self.v = array([[0 for i in range(self.aN)] for y in range(self.T)], dtype=float)
         self.vtilde = [[] for y in range(self.T)]
@@ -163,7 +163,7 @@ class cohort:
         self.upath = array([0 for y in range(self.T)], dtype=float)
 
 
-    def findvfns(self, p):
+    def findvpath(self, p):
         """ Given prices, transfers, benefits and tax rates over one's life-cycle, 
         value and decision functions are calculated ***BACKWARD*** """
         [r, w, b, tr, tw, tb, Tr] = p
@@ -266,27 +266,6 @@ class cohort:
         return c, l
 
 
-    # def findpath(self, p):
-    #     """ find asset and labor supply profiles over life-cycle from value function
-    #     """
-    #     [r, w, b, tr, tw, tb, Tr] = p
-    #     T = self.T
-    #     # generate each generation's asset, consumption and labor supply forward
-    #     for y in range(T-1):    # y = 0, 1,..., 58
-    #         self.apath[y+1] = self.clip(interp1d(self.aa, self.a[y],
-    #                                         kind='cubic')(self.apath[y]))
-    #         if y >= T-self.W:
-    #             self.cpath[y] = (1+(1-tr[y])*r[y])*self.apath[y] + b[y] + Tr[y] - self.apath[y+1]
-    #             self.lpath[y] = 0
-    #         else:
-    #             self.cpath[y], self.lpath[y] = self.findcl(y, self.apath[y], self.apath[y+1], p)
-    #         self.upath[y] = self.util(self.cpath[y], self.lpath[y])
-    #     # the oldest generation's consumption and labor supply
-    #     self.cpath[T-1] = (1+(1-tr[T-1])*r[T-1])*self.apath[T-1] + b[T-1] + Tr[T-1]
-    #     self.lpath[T-1] = 0
-    #     self.upath[T-1] = self.util(self.cpath[T-1], self.lpath[T-1])
-
-
     def clip(self, a):
         return self.aL if a <= self.aL else self.aH if a >= self.aH else a
 
@@ -305,21 +284,6 @@ class cohort:
     def ul(self, c, l):
         # marginal utility w.r.t. labor
         return -(1-self.gamma)*self.util(c, l)*(1-self.sigma)/(1-l)
-
-
-    # def util(self, c, l):
-    #     # calculate utility value with given consumption and labor
-    #     return (((c+self.psi)*(1-l)**self.gamma)**(1-self.sigma)-1)/(1-self.sigma*1.0)
-
-
-    # def uc(self, c, l):
-    #     # marginal utility w.r.t. consumption
-    #     return (c+self.psi)**(-self.sigma)*(1-l)**(self.gamma*(1-self.sigma))
-
-
-    # def ul(self, c, l):
-    #     # marginal utility w.r.t. labor
-    #     return -self.gamma*(c+self.psi)**(1-self.sigma)*(1-l)**(self.gamma*(1-self.sigma)-1)
 
 
     def IteratePaths(self, RT, a0, p):
@@ -396,7 +360,64 @@ age-profile iteration and projection method
 """
 
 
-def transition(zeta=0.3, ng=0.01, ng1=0.0, N=3, W=45, R=30, alpha=0.35, delta=0.06, 
+def transition(ng0=0.01, ng1=0.0, N=5, W=45, R=30, TG=3):
+    start_time = datetime.now()
+    T = W + R
+    TS = T*TG
+    """Find Old and New Steady States with population growth rates ng and ng1"""
+    e0 = world(TG=1,ng=ng0)
+    e1 = world(TG=1,ng=ng1)
+    e0, g0 = value(e0, cohort(beta=beta))
+    e1, g1 = value(e1, cohort(beta=beta))
+    """Initialize Transition Dynamics for t = 0,...,TS-1"""
+    et= world(TG=TG,ng=ng1,k=e1.k[0])
+    for t in range(TS):
+        et.k[t] = e1.k[0]
+        et.K[t] = e1.K[0]
+        et.L[t] = e1.L[0]
+        et.Beq[t] = e1.Beq[0]
+    et.k[0:TS-T] = linspace(e0.k[-1],e1.k[0],TS-T)
+    et.K[0:TS-T] = linspace(e0.K[-1],e1.K[0],TS-T)
+    et.L[0:TS-T] = linspace(e0.L[-1],e1.L[0],TS-T)
+    et.Beq[0:TS-T] = linspace(e0.Beq[-1],e1.Beq[0],TS-T)
+    """populations of each cohort with and without early death
+            pop[t,y] is the number of y-yrs-old agents in t"""
+    sp = loadtxt('sp.txt', delimiter='\n')
+    mass1 = array([prod(sp[0:t+1])/(1+ng1)**t for t in range(T)], dtype=float)
+    mass1b = array([1/(1+ng1)**t for t in range(T)], dtype=float)
+    mass0 = array([prod(sp[0:t+1])/(1+ng0)**t for t in range(T)], dtype=float)
+    mass0b = array([1/(1+ng0)**t for t in range(T)], dtype=float)
+    pop = array([mass1*(1+ng1)**(t+1) for t in range(TS)], dtype=float)
+    popb = array([mass1b*(1+ng1)**(t+1) for t in range(TS)], dtype=float)
+    for t in range(T-1):
+        pop[t,t+1:] = mass0[t+1:]*(1+ng0)**(t+1)
+        popb[t,t+1:] = massb[t+1:]*(1+ng0)**(t+1)
+    """Construct TS generations who die in t = 0,...,TS-1, respectively"""
+    a0 = [(g0.apath[-t-1] if t <= T-2 else 0) for t in range(TS)]
+    gs = [cohort(a0=a0[t]) for t in range(TS)]
+    """Iteratively Calculate all generations optimal consumption and labour supply"""
+    for n in range(N):
+        et.update()
+        for g in gs:
+            if (g.y >= T-1) and (g.y <= TS-(T+1)):
+                g.findvpath(et.p[:,g.y-T+1:g.y+1])
+            elif (g.y < T-1):
+                g.findvpath(et.p[:,:g.y+1])
+            else:
+                g.apath, g.cpath, g.lpath = g1.apath, g1.cpath, g1.lpath
+        et.aggregate(gs)
+        if et.Converged:
+            print 'Transition Path Converged! in', n+1,'iterations with tolerance level', et.tol
+            break
+        if n >= N-1:
+            print 'Transition Path Not Converged! in', n+1,'iterations with tolerance level', et.tol
+            break        
+    end_time = datetime.now()
+    print('Duration: {}'.format(end_time - start_time))
+    return et, gs, g0, g1
+
+
+"""def transition(zeta=0.3, ng=0.01, ng1=0.0, N=3, W=45, R=30, alpha=0.35, delta=0.06, 
     phi=0.8, TG=4, beta=0.96, gamma=0.35, sigma=2.0, tol=0.001):
     start_time = datetime.now()
     T = W + R
@@ -433,7 +454,7 @@ def transition(zeta=0.3, ng=0.01, ng1=0.0, N=3, W=45, R=30, alpha=0.35, delta=0.
             break        
     end_time = datetime.now()
     print('Duration: {}'.format(end_time - start_time))
-    return et, gs, g0, g1
+    return et, gs, g0, g1"""
 
 
 def direct(e, g, N=10):
@@ -457,7 +478,7 @@ def value(e,g,N=10):
     start_time = datetime.now()
     for n in range(N):
         e.update()
-        g.findvfns(e.p)
+        g.findvpath(e.p)
         e.aggregate(g)
         if e.Converged:
             print 'Economy Converged to SS! in',n+1,'iterations with', e.tol
@@ -470,7 +491,7 @@ def value(e,g,N=10):
     return e, g
 
 
-def steadypath(g):
+def spath(g):
     fig = plt.figure(facecolor='white')
     ax = fig.add_subplot(111)
     ax1 = fig.add_subplot(221)
@@ -497,7 +518,7 @@ def steadypath(g):
     # plt.close() # plt.close("all")
 
 
-def transitionpath(e):
+def tpath(e):
     fig = plt.figure(facecolor='white')
     ax = fig.add_subplot(111)
     ax1 = fig.add_subplot(221)
