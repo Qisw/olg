@@ -190,7 +190,7 @@ class generation:
                                                         self.apath[y+1], p)
             self.upath[y] = self.util(self.cpath[y], self.npath[y])
         # the oldest generation's consumption and labor supply
-        self.cpath[self.T-1] = (1 + r[y])*self.apath[self.T-1] + b[y]
+        self.cpath[self.T-1] = (1 + r[self.T-1])*self.apath[self.T-1] + b[self.T-1]
         self.npath[self.T-1] = 0
         self.upath[self.T-1] = self.util(self.cpath[self.T-1], self.npath[self.T-1])
 
