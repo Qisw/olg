@@ -17,9 +17,9 @@ import pickle
 class state:
     """ This class is just a "struct" to hold  the collection of primitives defining
     an economy in which one or multiple generations live """
-    def __init__(self, alpha=0.35, delta=0.08, phi=0.8, tol=0.01,
+    def __init__(self, alpha=0.3, delta=0.08, phi=0.8, tol=0.01,
         tr = 0.429, tw = 0.248, zeta=0.4, gy = 0.195, Beq = 0,
-        k=3.5, L=10, TG=4, W=45, R=30, ng0 = 1.01, ng1 = 1.00):
+        k=3.5, l=0.3, TG=4, W=45, R=30, ng0 = 1.01, ng1 = 1.00):
         # tr = 0.429, tw = 0.248, zeta=0.5, gy = 0.195,
         """tr, tw and tb are tax rates on capital return, wage and tax for pension.
         tb is determined by replacement ratio, zeta, and other endogenous variables.
@@ -44,16 +44,16 @@ class state:
         self.tw = array([tw for t in range(TS)], dtype=float)
         self.gy = array([gy for t in range(TS)], dtype=float)
         self.k = array([k for t in range(TS)], dtype=float)
-        self.L = array([L for t in range(TS)], dtype=float)
-        self.K = array([k*L for t in range(TS)], dtype=float)
-        self.Beq = array([k*L/Pt[t]*sum((1-self.sp[t])*self.pop[t]) for t in range(TS)], dtype=float)
+        self.L = L = array([l*(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
+        self.K = K = array([k*L[t] for t in range(TS)], dtype=float)
+        self.Beq = array([K[t]/Pt[t]*sum((1-self.sp[t])*self.pop[t]) for t in range(TS)], dtype=float)
         self.y = y = array([k**alpha for t in range(TS)], dtype=float)
         self.r = r = array([(alpha)*k**(alpha-1) - delta for t in range(TS)], dtype=float)
         self.w = w = array([(1-alpha)*k**alpha for t in range(TS)], dtype=float)
-        self.tb = tb = array([zeta*(1-tw)*Pr[t]/(L+zeta*Pr[t]) for t in range(TS)], dtype=float)
+        self.tb = tb = array([zeta*(1-tw)*Pr[t]/(L[t]+zeta*Pr[t]) for t in range(TS)], dtype=float)
         self.b = array([zeta*(1-tw-tb[t])*w[t] for t in range(TS)], dtype=float)
-        self.Tax = Tax = array([tw*w[t]*L+tr*r[t]*k*L for t in range(TS)], dtype=float)
-        self.G = G = array([gy*y[t]*L for t in range(TS)], dtype=float)
+        self.Tax = Tax = array([tw*w[t]*L[t]+tr*r[t]*K[t] for t in range(TS)], dtype=float)
+        self.G = G = array([gy*y[t]*L[t] for t in range(TS)], dtype=float)
         self.Tr = array([(Tax[t]+Beq-G[t])/Pt[t] for t in range(TS)], dtype=float)
         # container for r, w, b, tr, tw, tb, Tr
         self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr])
@@ -105,8 +105,8 @@ class state:
 class cohort:
     """ This class is just a "struct" to hold the collection of primitives defining
     a generation """
-    def __init__(self, beta=0.96, sigma=2.0, gamma=0.32, aH=10.0, aL=0.0, y=-1,
-        aN=101, Nq=50, psi=0.001, tol=0.01, neg=-1e10, W=45, R=30, a0 = 0):
+    def __init__(self, beta=0.96, sigma=2.0, gamma=0.32, aH=3.0, aL=0.0, y=-1,
+        aN=301, Nq=50, psi=0.001, tol=0.01, neg=-1e10, W=45, R=30, a0 = 0):
         self.beta, self.sigma, self.gamma, self.psi = beta, sigma, gamma, psi
         self.R, self.W, self.y = R, W, y
         self.T = T = (y+1 if (y >= 0) and (y <= W+R-2) else W+R)
@@ -154,6 +154,7 @@ class cohort:
                 elif b0 == c0:
                     self.a[y,i] = self.aa[-1]
                 else:
+                    # print a0, b0, c0
                     def objfn(a1): # Define objective function for optimal a'
                         return -self.findv(y, self.aa[i], a1, p)
                     result = minimize_scalar(objfn, bracket=(a0,b0,c0), method='Golden')
@@ -273,7 +274,7 @@ def popef():
     R = T - W
     return pop5, sp
 
-def findinitial(ng0=1.01, ng1=1.0, W=45, R=30, TG=4, beta=0.96):
+def findinitial(ng0=1.01, ng1=1.00, W=45, R=30, TG=4, beta=0.96):
     start_time = datetime.now()
     """Find Old and New Steady States with population growth rates ng and ng1"""
     e0, g0 = value(state(TG=1,W=W,R=R,ng0=ng0,ng1=ng0), cohort(beta=beta,W=W,R=R))
@@ -333,10 +334,8 @@ def value(e, g, N=15):
     start_time = datetime.now()
     for n in range(N):
         e.update()
-        print 'update'
         g.findvpath(e.p)
-        print 'findvpath'
-        e.aggregate([g for t in range(e.TS)])
+        e.aggregate([g])
         if e.Converged:
             print 'Economy Converged to SS! in',n+1,'iterations with', e.tol
             break
