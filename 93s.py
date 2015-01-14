@@ -18,7 +18,7 @@ class world:
     """ This class is just a "struct" to hold  the collection of primitives defining
     an economy in which one or multiple generations live """
     def __init__(self, alpha=0.35, delta=0.08, phi=0.8, tol=0.01, tol10=1e-10,
-        tr = 0.429, tw = 0.248, zeta=0.15, gy = 0.195,
+        tr = 0.429, tw = 0.248, zeta=0.4, gy = 0.195,
         k=3.5, l=0.3, TG=4, W=45, R=30, ng = 0.01):
     # tr = 0.429, tw = 0.248, zeta=0.5, gy = 0.195,
         """tr, tw and tb are tax rates on capital return, wage and tax for pension.
@@ -87,7 +87,7 @@ class world:
                 K1[t] = sum([gs.apath[y]*self.mass[y] for y in range(T)])
                 L1[t] = sum([gs.lpath[y]*self.mass[y]*self.ef[y] for y in range(T)])
                 """worker's labor supply is product of working hour and efficiency"""
-                self.Beq[t] = sum([gs.apath[y]*(1-self.sp[y]) for y in range(T)])
+                self.Beq[t] = sum([gs.apath[y]*self.mass[y]*(1-self.sp[y]) for y in range(T)])
         else:
             """Aggregate all generations' capital and labor supply at each year"""
             K1, L1 = array([[0 for t in range(TS)] for i in range(2)], dtype=float)
@@ -95,11 +95,11 @@ class world:
                 if t <= TS-T-1:
                     K1[t] = sum([gs[t+y].apath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
                     L1[t] = sum([gs[t+y].lpath[-(y+1)]*self.pop[t,-(y+1)]*self.ef[-(y+1)] for y in range(T)])
-                    self.Beq[t] = sum([gs[t+y].apath[-(y+1)]*(1-self.sp[-(y+1)]) for y in range(T)])
+                    self.Beq[t] = sum([gs[t+y].apath[-(y+1)]*self.pop[t,-(y+1)]*(1-self.sp[-(y+1)]) for y in range(T)])
                 else:
                     K1[t] = sum([gs[TS-T].apath[-(y+1)]*self.pop[t][-(y+1)] for y in range(T)])
                     L1[t] = sum([gs[TS-T].lpath[-(y+1)]*self.pop[t][-(y+1)]*self.ef[-(y+1)] for y in range(T)])
-                    self.Beq[t] = sum([(gs[TS-T].apath[-(y+1)]*(1-self.sp[-(y+1)])) for y in range(T)])
+                    self.Beq[t] = sum([(gs[TS-T].apath[-(y+1)]*self.pop[t,-(y+1)]*(1-self.sp[-(y+1)])) for y in range(T)])
         self.Converged = (max(absolute(K1-self.K)) < self.tol*max(absolute(self.K)))
         """ Update the economy's aggregate K and N with weight phi on the old """
         self.K = self.phi*self.K + (1-self.phi)*K1
