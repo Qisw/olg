@@ -17,8 +17,8 @@ import pickle
 class world:
     """ This class is just a "struct" to hold  the collection of primitives defining
     an economy in which one or multiple generations live """
-    def __init__(self, alpha=0.35, delta=0.08, phi=0.8, tol=0.01, tol10=1e-10,
-        tr = 0.429, tw = 0.248, zeta=0.4, gy = 0.195,
+    def __init__(self, alpha=0.3, delta=0.08, phi=0.8, tol=0.01, tol10=1e-10,
+        tr = 0.15, tw = 0.11, zeta=0.15, gy = 0.195,
         k=3.5, l=0.3, TG=4, W=45, R=30, ng = 0.01):
     # tr = 0.429, tw = 0.248, zeta=0.5, gy = 0.195,
         """tr, tw and tb are tax rates on capital return, wage and tax for pension.
@@ -130,8 +130,8 @@ class world:
 class cohort:
     """ This class is just a "struct" to hold the collection of primitives defining
     a generation """
-    def __init__(self, beta=0.99, sigma=2.0, gamma=0.32, aH=5.0, aL=0.0, y=-1,
-        aN=101, Nq=50, psi=0.001, tol=0.01, tol10=1e-10, neg=-1e10, W=45, R=30,
+    def __init__(self, beta=0.96, sigma=2.0, gamma=0.32, aH=5.0, aL=0.0, y=-1,
+        aN=201, Nq=50, psi=0.001, tol=0.01, tol10=1e-10, neg=-1e10, W=45, R=30,
         ng = 0.01, a0 = 0):
         self.beta, self.sigma, self.gamma, self.psi = beta, sigma, gamma, psi
         self.R, self.W, self.y = R, W, y
@@ -308,10 +308,9 @@ def findinitial(ng0=0.01, ng1=0.0, TG=3, beta=0.96):
     why-am-i-getting-an-error-about-my-class-defining-slots-when-trying-to-pickl"""
     end_time = datetime.now()
     print('Duration: {}'.format(end_time - start_time))
-    return e0, e1, et, g0, g1, gs
 
 
-def transition(N=3):
+def transition(N=3,beta=0.96):
     start_time = datetime.now()
     with open('initial.pickle','rb') as f:
         [e0, e1, et, a0, c0, l0, a1, c1, l1, T, TS] = pickle.load(f)
@@ -326,7 +325,7 @@ def transition(N=3):
             elif (g.y < T-1):
                 g.findvpath(et.p[:,:g.y+1])
             else:
-                g.apath, g.cpath, g.lpath = g1.apath, g1.cpath, g1.lpath
+                g.apath, g.cpath, g.lpath = a1, c1, l1
             print 'iterated cohort:',g.y, 
         et.aggregate(gs)
         print 'all cohorts iterated for',n+1,'times'
@@ -342,70 +341,12 @@ def transition(N=3):
     end_time = datetime.now()
     print('Duration: {}'.format(end_time - start_time))
 
-
-def transition_direct(zeta=0.3, ng=0.01, ng1=0.0, N=3, W=45, R=30, alpha=0.35, delta=0.06, 
-    phi=0.8, TG=4, beta=0.96, gamma=0.35, sigma=2.0, tol=0.001):
-    start_time = datetime.now()
-    T = W + R
-    TS = T*TG
-    """Find Old and New Steady States with population growth rates ng and ng1"""
-    e0 = economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,ng=ng)
-    e1 = economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,ng=ng1)   
-    e0, g0 = direct(e0, generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R))
-    e1, g1 = direct(e1, generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R))
-    """Initialize Transition Dynamics of Economy for t = 0,...,TS-1"""
-    et= economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=TG,W=W,R=R,ng=ng1,
-        k=e1.K[0],l=e1.L[0])
-    et.K[0:TS-T] = linspace(e0.K[-1],e1.K[0],TS-T)
-    et.L[0:TS-T] = linspace(e0.L[-1],e1.L[0],TS-T)
-    """Construct TS generations who die in t = 0,...,TS-1, respectively"""
-    gs = [generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R,y=t)
-            for t in range(TS)]
-    """Iteratively Calculate all generations optimal consumption and labour supply"""
-    for n in range(N):
-        et.UpdateStates()
-        for g in gs:
-            if (g.y >= T-1) and (g.y <= TS-(T+1)):
-                g.IteratePaths(T, 0, et.p[:,g.y-T+1:g.y+1])
-            elif (g.y < T-1):
-                g.IteratePaths(g.y+1, g0.apath[T-g.y-1], et.p[:,:g.y+1])
-            else:
-                g.apath, g.cpath, g.lpath = g1.apath, g1.cpath, g1.lpath
-        et.Aggregate(gs)
-        if et.Converged:
-            print 'Transition Path Converged! in', n+1,'iterations with', et.tol
-            break
-        if n >= N-1:
-            print 'Transition Path Not Converged! in', n+1,'iterations with', et.tol
-            break        
-    end_time = datetime.now()
-    print('Duration: {}'.format(end_time - start_time))
-    return et, gs, g0, g1
-
-
 def value(e, g, N=15):
     start_time = datetime.now()
     for n in range(N):
         e.update()
         g.findvpath(e.p)
         e.aggregate(g)
-        if e.Converged:
-            print 'Economy Converged to SS! in',n+1,'iterations with', e.tol
-            break
-        if n >= N-1:
-            print 'Economy Not Converged in',n+1,'iterations with', e.tol
-            break
-    end_time = datetime.now()
-    print('Duration: {}'.format(end_time - start_time))
-    return e, g
-
-
-def direct(e, g, N=15):
-    start_time = datetime.now()
-    for n in range(N):
-        e.UpdateStates()
-        g.IteratePaths(e.T, 0, e.p)
-        e.Aggregate(g)
         if e.Converged:
             print 'Economy Converged to SS! in',n+1,'iterations with', e.tol
             break
@@ -464,7 +405,7 @@ def tpath(et):
     ax3.plot(et.r)
     ax4.plot(et.w)
     ax.set_xlabel('generation')
-    ax.set_title('R:' + str(e.R) + 'W:' + str(e.W) + 'TS:' + str(e.TS), y=1.08)
+    ax.set_title('R:' + str(et.R) + 'W:' + str(et.W) + 'TS:' + str(et.TS), y=1.08)
     ax1.set_title('Capital')
     ax2.set_title('Labor')
     ax3.set_title('Interest Rate')
@@ -472,3 +413,61 @@ def tpath(et):
     plt.show()
     # time.sleep(1)
     # plt.close() # plt.close("all")
+
+
+
+def transition_direct(zeta=0.3, ng=0.01, ng1=0.0, N=3, W=45, R=30, alpha=0.35, delta=0.06, 
+    phi=0.8, TG=4, beta=0.96, gamma=0.35, sigma=2.0, tol=0.001):
+    start_time = datetime.now()
+    T = W + R
+    TS = T*TG
+    """Find Old and New Steady States with population growth rates ng and ng1"""
+    e0 = economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,ng=ng)
+    e1 = economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,ng=ng1)   
+    e0, g0 = direct(e0, generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R))
+    e1, g1 = direct(e1, generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R))
+    """Initialize Transition Dynamics of Economy for t = 0,...,TS-1"""
+    et= economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=TG,W=W,R=R,ng=ng1,
+        k=e1.K[0],l=e1.L[0])
+    et.K[0:TS-T] = linspace(e0.K[-1],e1.K[0],TS-T)
+    et.L[0:TS-T] = linspace(e0.L[-1],e1.L[0],TS-T)
+    """Construct TS generations who die in t = 0,...,TS-1, respectively"""
+    gs = [generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R,y=t)
+            for t in range(TS)]
+    """Iteratively Calculate all generations optimal consumption and labour supply"""
+    for n in range(N):
+        et.UpdateStates()
+        for g in gs:
+            if (g.y >= T-1) and (g.y <= TS-(T+1)):
+                g.IteratePaths(T, 0, et.p[:,g.y-T+1:g.y+1])
+            elif (g.y < T-1):
+                g.IteratePaths(g.y+1, g0.apath[T-g.y-1], et.p[:,:g.y+1])
+            else:
+                g.apath, g.cpath, g.lpath = g1.apath, g1.cpath, g1.lpath
+        et.Aggregate(gs)
+        if et.Converged:
+            print 'Transition Path Converged! in', n+1,'iterations with', et.tol
+            break
+        if n >= N-1:
+            print 'Transition Path Not Converged! in', n+1,'iterations with', et.tol
+            break        
+    end_time = datetime.now()
+    print('Duration: {}'.format(end_time - start_time))
+    return et, gs, g0, g1
+
+
+def direct(e, g, N=15):
+    start_time = datetime.now()
+    for n in range(N):
+        e.UpdateStates()
+        g.IteratePaths(e.T, 0, e.p)
+        e.Aggregate(g)
+        if e.Converged:
+            print 'Economy Converged to SS! in',n+1,'iterations with', e.tol 
+            break
+        if n >= N-1:
+            print 'Economy Not Converged in',n+1,'iterations with', e.tol
+            break
+    end_time = datetime.now()
+    print('Duration: {}'.format(end_time - start_time))
+    return e, g
