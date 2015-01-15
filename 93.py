@@ -19,8 +19,8 @@ class state:
     an economy in which one or multiple generations live """
     def __init__(self, alpha=0.3, delta=0.08, phi=0.8, tol=0.01,
         tr = 0.15, tw = 0.11, zeta=0.15, gy = 0.195,
-        k=3.5, l=0.3, TG=4, W=45, R=30, ng0 = 1.01, ng1 = 1.00):
-        # tr = 0.429, tw = 0.248, zeta=0.5, gy = 0.195,
+        k=3.5, l=0.3, TG=4, W=45, R=30, ng = 1.01, dng = 0.0):
+        # tr = 0.429, tw = 0.248, zeta=0.5, gy = 0.195, in Section 9.3. in Heer/Maussner
         """tr, tw and tb are tax rates on capital return, wage and tax for pension.
         tb is determined by replacement ratio, zeta, and other endogenous variables.
         gy is ratio of government spending over output.
@@ -30,9 +30,10 @@ class state:
         self.W, self.R = W, R
         self.T = T = (W+R)
         self.TS = TS = (W+R)*TG
-        sp = loadtxt('sp.txt', delimiter='\n')
-        m1 = array([prod(sp[:t+1])/ng1**t for t in range(T)], dtype=float)
+        ng0, ng1 = ng, ng + dng
+        sp = loadtxt('sp.txt', delimiter='\n')  # survival probability
         m0 = array([prod(sp[:t+1])/ng0**t for t in range(T)], dtype=float)
+        m1 = array([prod(sp[:t+1])/ng1**t for t in range(T)], dtype=float)
         self.sp = array([sp for t in range(TS)], dtype=float)
         self.pop = array([m1*ng1**(t+1) for t in range(TS)], dtype=float)
         for t in range(T-1):
@@ -70,24 +71,25 @@ class state:
             if t <= TS-T-1:
                 K1[t] = sum([gs[t+y].apath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
                 L1[t] = sum([gs[t+y].epath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
-                self.Beq[t] = sum([gs[t+y].apath[-(y+1)]*(1-self.sp[t,-(y+1)]) for y in range(T)])
+                self.Beq[t] = sum([gs[t+y].apath[-(y+1)]*self.pop[t,-(y+1)]*(1-self.sp[t,-(y+1)]) for y in range(T)])
             else:
                 K1[t] = sum([gs[-1].apath[-(y+1)]*self.pop[t][-(y+1)] for y in range(T)])
                 L1[t] = sum([gs[-1].epath[-(y+1)]*self.pop[t][-(y+1)] for y in range(T)])
-                self.Beq[t] = sum([(gs[-1].apath[-(y+1)]*(1-self.sp[t,-(y+1)])) for y in range(T)])
+                self.Beq[t] = sum([(gs[-1].apath[-(y+1)]*self.pop[t,-(y+1)]*(1-self.sp[t,-(y+1)])) for y in range(T)])
         self.Converged = (max(absolute(K1-self.K)) < self.tol*max(absolute(self.K)))
         """ Update the economy's aggregate K and N with weight phi on the old """
         self.K = self.phi*self.K + (1-self.phi)*K1
         self.L = self.phi*self.L + (1-self.phi)*L1
         self.k = self.K/self.L
-        print "K=%2.2f," %(self.K[0]),"L=%2.2f," %(self.L[0]),"K/L=%2.2f" %(self.k[0])
+        # print "K=%2.2f," %(self.K[0]),"L=%2.2f," %(self.L[0]),"K/L=%2.2f" %(self.k[0])
+        for i in range(self.TS/self.T):
+            print "K=%2.2f," %(self.K[i*self.T]),"L=%2.2f," %(self.L[i*self.T]),"K/L=%2.2f" %(self.k[i*self.T])
 
 
     def update(self):
         """ Update market prices, w and r, and many others according to new
         aggregate capital and labor paths for years 0,...,TS from last iteration """
         for t in range(self.TS):
-            # self.k[t] = self.K[t]/self.L[t]
             self.Pt[t] = sum(self.pop[t])
             self.Pr[t] = sum([self.pop[t,y] for y in range(self.W,self.T)])
             self.y[t] = self.k[t]**self.alpha
@@ -98,8 +100,11 @@ class state:
             self.Tr[t] = (self.Tax[t] + self.Beq[t] - self.G[t])/self.Pt[t]
             self.tb[t] = self.zeta*(1-self.tw[t])*self.Pr[t]/(self.L[t]+self.zeta*self.Pr[t])
             self.b[t] = self.zeta*(1-self.tw[t]-self.tb[t])*self.w[t]
-        print "for r=%2.2f," %(self.r[0]*100), "w=%2.2f," %(self.w[0]), \
-                "Tr=%2.2f," %(self.Tr[0]), "b=%2.2f," %(self.b[0]), "Beq.=%2.2f," %(self.Beq[0])
+        # print "for r=%2.2f," %(self.r[0]*100), "w=%2.2f," %(self.w[0]), \
+        #         "Tr=%2.2f," %(self.Tr[0]), "b=%2.2f," %(self.b[0]), "Beq.=%2.2f," %(self.Beq[0])
+        for i in range(self.TS/self.T):
+            print "r=%2.2f," %(self.r[i*self.T]*100),"w=%2.2f," %(self.w[i*self.T]),\
+                    "Tr=%2.2f" %(self.Tr[i*self.T]), "b=%2.2f," %(self.b[i*self.T])
         self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr])
 
 
@@ -275,20 +280,17 @@ def popef():
     R = T - W
     return pop5, sp
 
-def findinitial(ng0=1.01, ng1=1.00, W=45, R=30, TG=4, beta=0.96):
+def findinitial(ng0=1.01, ng1=1.00, W=45, R=30, TG=4, alpha=0.3, beta=0.96, delta=0.08):
     start_time = datetime.now()
     """Find Old and New Steady States with population growth rates ng and ng1"""
-    e0, g0 = value(state(TG=1,W=W,R=R,ng0=ng0,ng1=ng0), cohort(beta=beta,W=W,R=R))
-    e1, g1 = value(state(TG=1,W=W,R=R,ng0=ng1,ng1=ng1), cohort(beta=beta,W=W,R=R))
+    e0, g0 = value(state(TG=1,W=W,R=R,ng=ng0,alpha=alpha,delta=delta),
+                    cohort(beta=beta,W=W,R=R))
+    e1, g1 = value(state(TG=1,W=W,R=R,ng=ng1,alpha=alpha,delta=delta),
+                    cohort(beta=beta,W=W,R=R))
     """Initialize Transition Path for t = 0,...,TS-1"""
-    et= state(TG=TG,W=W,R=R,ng0=ng0,ng1=ng1)
-    for t in range(et.TS):
-        et.k[t] = e1.k[0]
-        et.L[t] = e1.L[0]
-        et.Beq[t] = e1.Beq[0]
+    et= state(TG=TG,W=W,R=R,ng=ng0,dng=(ng1-ng0),k=e1.k[0],alpha=alpha,delta=delta)
     et.k[:et.TS-et.T] = linspace(e0.k[-1],e1.k[0],et.TS-et.T)
-    et.L[:et.TS-et.T] = linspace(e0.L[-1],e1.L[0],et.TS-et.T)
-    et.Beq[:et.TS-et.T] = linspace(e0.Beq[-1],e1.Beq[0],et.TS-et.T)
+    et.update()
     with open('initial.pickle','wb') as f:
         pickle.dump([e0, e1, et, g0.apath, g1.apath, g1.epath], f)
     """http://stackoverflow.com/questions/2204155/
@@ -299,7 +301,6 @@ def findinitial(ng0=1.01, ng1=1.00, W=45, R=30, TG=4, beta=0.96):
 
 
 def transition(N=3,beta=0.96):
-    start_time = datetime.now()
     with open('initial.pickle','rb') as f:
         [e0, e1, et, a0, a1, el1] = pickle.load(f)
     """Generate TS cohorts who die in t = 0,...,TS-1 with initial asset g0.apath[-t-1]"""
@@ -307,8 +308,7 @@ def transition(N=3,beta=0.96):
             for t in range(et.TS)]
     """Iteratively Calculate all generations optimal consumption and labour supply"""
     for n in range(N):
-        et.update()
-        print 'after',n,'iterations','r:', et.r[0::30]
+        start_time = datetime.now()
         for g in gs:
             if (g.y >= et.T-1) and (g.y <= et.TS-(et.T+1)):
                 g.findvpath(et.p[:,g.y-et.T+1:g.y+1])
@@ -318,7 +318,10 @@ def transition(N=3,beta=0.96):
                 g.apath, g.epath = a1, el1
             print 'iterating cohort:',g.y+1, '...'
         et.aggregate(gs)
-        print 'all cohorts iterated for',n+1,'times'
+        et.update()
+        print 'after',n+1,'iterations over all cohorts,','r:', et.r[0::30]
+        end_time = datetime.now()
+        print('Duration: {}'.format(end_time - start_time))
         with open('transition.pickle','wb') as f:
             pickle.dump([et, [gs[t].apath for t in range(et.TS)], 
                 [gs[t].cpath for t in range(et.TS)], [gs[t].lpath for t in range(et.TS)]], f)
@@ -328,8 +331,6 @@ def transition(N=3,beta=0.96):
         if n >= N-1:
             print 'Transition Path Not Converged! in', n+1,'iterations with tolerance level', et.tol
             break
-    end_time = datetime.now()
-    print('Duration: {}'.format(end_time - start_time))
 
 
 def value(e, g, N=15):
