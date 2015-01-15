@@ -18,7 +18,7 @@ class state:
     """ This class is just a "struct" to hold  the collection of primitives defining
     an economy in which one or multiple generations live """
     def __init__(self, alpha=0.3, delta=0.08, phi=0.8, tol=0.01,
-        tr = 0.429, tw = 0.248, zeta=0.4, gy = 0.195, Beq = 0,
+        tr = 0.15, tw = 0.11, zeta=0.15, gy = 0.195,
         k=3.5, l=0.3, TG=4, W=45, R=30, ng0 = 1.01, ng1 = 1.00):
         # tr = 0.429, tw = 0.248, zeta=0.5, gy = 0.195,
         """tr, tw and tb are tax rates on capital return, wage and tax for pension.
@@ -46,7 +46,7 @@ class state:
         self.k = array([k for t in range(TS)], dtype=float)
         self.L = L = array([l*(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
         self.K = K = array([k*L[t] for t in range(TS)], dtype=float)
-        self.Beq = array([K[t]/Pt[t]*sum((1-self.sp[t])*self.pop[t]) for t in range(TS)], dtype=float)
+        self.Beq = Beq = array([K[t]/Pt[t]*sum((1-self.sp[t])*self.pop[t]) for t in range(TS)], dtype=float)
         self.y = y = array([k**alpha for t in range(TS)], dtype=float)
         self.r = r = array([(alpha)*k**(alpha-1) - delta for t in range(TS)], dtype=float)
         self.w = w = array([(1-alpha)*k**alpha for t in range(TS)], dtype=float)
@@ -54,7 +54,7 @@ class state:
         self.b = array([zeta*(1-tw-tb[t])*w[t] for t in range(TS)], dtype=float)
         self.Tax = Tax = array([tw*w[t]*L[t]+tr*r[t]*K[t] for t in range(TS)], dtype=float)
         self.G = G = array([gy*y[t]*L[t] for t in range(TS)], dtype=float)
-        self.Tr = array([(Tax[t]+Beq-G[t])/Pt[t] for t in range(TS)], dtype=float)
+        self.Tr = array([(Tax[t]+Beq[t]-G[t])/Pt[t] for t in range(TS)], dtype=float)
         # container for r, w, b, tr, tw, tb, Tr
         self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr])
         # whether the capital stock has converged
@@ -82,6 +82,7 @@ class state:
         self.k = self.K/self.L
         print "K=%2.2f," %(self.K[0]),"L=%2.2f," %(self.L[0]),"K/L=%2.2f" %(self.k[0])
 
+
     def update(self):
         """ Update market prices, w and r, and many others according to new
         aggregate capital and labor paths for years 0,...,TS from last iteration """
@@ -98,7 +99,7 @@ class state:
             self.tb[t] = self.zeta*(1-self.tw[t])*self.Pr[t]/(self.L[t]+self.zeta*self.Pr[t])
             self.b[t] = self.zeta*(1-self.tw[t]-self.tb[t])*self.w[t]
         print "for r=%2.2f," %(self.r[0]*100), "w=%2.2f," %(self.w[0]), \
-                "Tr=%2.2f," %(self.Tr[0]), "b=%2.2f," %(self.b[0]), "beq.=%2.2f," %(self.Beq[0])
+                "Tr=%2.2f," %(self.Tr[0]), "b=%2.2f," %(self.b[0]), "Beq.=%2.2f," %(self.Beq[0])
         self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr])
 
 
@@ -106,7 +107,7 @@ class cohort:
     """ This class is just a "struct" to hold the collection of primitives defining
     a generation """
     def __init__(self, beta=0.96, sigma=2.0, gamma=0.32, aH=3.0, aL=0.0, y=-1,
-        aN=301, Nq=50, psi=0.001, tol=0.01, neg=-1e10, W=45, R=30, a0 = 0):
+        aN=101, Nq=50, psi=0.001, tol=0.01, neg=-1e10, W=45, R=30, a0 = 0):
         self.beta, self.sigma, self.gamma, self.psi = beta, sigma, gamma, psi
         self.R, self.W, self.y = R, W, y
         self.T = T = (y+1 if (y >= 0) and (y <= W+R-2) else W+R)
@@ -184,7 +185,7 @@ class cohort:
         self.cpath[T-1] = (1+(1-tr[T-1])*r[T-1])*self.apath[T-1] + b[T-1] + Tr[T-1]
         self.lpath[T-1] = 0
         self.upath[T-1] = self.util(self.cpath[T-1], self.lpath[T-1])
-        self.epath = self.lpath*self.ef
+        self.epath = self.lpath*self.ef[-self.T:]
 
 
     def GetBracket(self, y, l, m, p):
@@ -294,27 +295,28 @@ def findinitial(ng0=1.01, ng1=1.00, W=45, R=30, TG=4, beta=0.96):
     why-am-i-getting-an-error-about-my-class-defining-slots-when-trying-to-pickl"""
     end_time = datetime.now()
     print('Duration: {}'.format(end_time - start_time))
-    # return e0, e1, et, g0, g1, gs
+    return e0, e1, et, g0, g1
 
 
-def transition(N=3):
+def transition(N=3,beta=0.96):
     start_time = datetime.now()
     with open('initial.pickle','rb') as f:
-        [e0, e1, et, a0, c0, l0, a1, c1, l1] = pickle.load(f)
+        [e0, e1, et, a0, a1, el1] = pickle.load(f)
     """Generate TS cohorts who die in t = 0,...,TS-1 with initial asset g0.apath[-t-1]"""
     gs = [cohort(beta=beta,W=et.W,R=et.R,y=t,a0=(a0[-t-1] if t <= et.T-2 else 0))
             for t in range(et.TS)]
     """Iteratively Calculate all generations optimal consumption and labour supply"""
     for n in range(N):
         et.update()
+        print 'after',n,'iterations','r:', et.r[0::30]
         for g in gs:
             if (g.y >= et.T-1) and (g.y <= et.TS-(et.T+1)):
                 g.findvpath(et.p[:,g.y-et.T+1:g.y+1])
             elif (g.y < et.T-1):
                 g.findvpath(et.p[:,:g.y+1])
             else:
-                g.apath, g.epath = g1.apath, g1.epath
-            print 'iterating cohort:',g.y+1, '...\n'
+                g.apath, g.epath = a1, el1
+            print 'iterating cohort:',g.y+1, '...'
         et.aggregate(gs)
         print 'all cohorts iterated for',n+1,'times'
         with open('transition.pickle','wb') as f:
