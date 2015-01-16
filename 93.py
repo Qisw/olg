@@ -298,8 +298,10 @@ def findinitial(ng0=1.01, ng1=1.00, W=45, R=30, TG=4, alpha=0.3, beta=0.96, delt
     Et= state(TG=TG,W=W,R=R,ng=ng0,dng=(ng1-ng0),k=E1.k[0],alpha=alpha,delta=delta)
     Et.k[:TS-T] = linspace(E0.k[-1],E1.k[0],TS-T)
     Et.update()
-    with open('initial.pickle','wb') as f:
-        pickle.dump([E0, E1, Et, g0.apath, g0.epath, g1.apath, g1.epath], f)
+    with open('E.pickle','wb') as f:
+        pickle.dump([E0, E1, Et, 0], f)
+    with open('G.pickle','wb') as f:
+        pickle.dump([g0.apath, g0.epath, g0.lpath, g1.apath, g1.epath, g1.lpath], f)
     """http://stackoverflow.com/questions/2204155/
     why-am-i-getting-an-error-about-my-class-defining-slots-when-trying-to-pickl"""
     end_time = datetime.now()
@@ -307,8 +309,10 @@ def findinitial(ng0=1.01, ng1=1.00, W=45, R=30, TG=4, alpha=0.3, beta=0.96, delt
 
 
 def transition(N=15,beta=0.96):
-    with open('initial.pickle','rb') as f:
-        [E0, E1, Et, a0, e0, a1, e1] = pickle.load(f)
+    with open('E.pickle','rb') as f:
+        [E0, E1, Et, it] = pickle.load(f)
+    with open('G.pickle','rb') as f:
+        [a0, e0, l0, a1, e1, l1] = pickle.load(f)
     T = Et.T
     TS = Et.TS
     """Generate TS cohorts who die in t = 0,...,TS-1 with initial asset g0.apath[-t-1]"""
@@ -329,14 +333,16 @@ def transition(N=15,beta=0.96):
         print 'after',n+1,'iterations over all cohorts,','r:', E0.r[0], Et.r[0::30]
         end_time = datetime.now()
         print('Duration: {}'.format(end_time - start_time))
-        with open('transition.pickle','wb') as f:
-            pickle.dump([Et, [gs[t].apath for t in range(TS)], 
-                [gs[t].cpath for t in range(TS)], [gs[t].lpath for t in range(TS)]], f)
+        with open('E.pickle','wb') as f:
+            pickle.dump([E0, E1, Et, n+1], f)
+        with open('GS.pickle','wb') as f:
+            pickle.dump([[gs[t].apath for t in range(TS)], [gs[t].cpath for t in range(TS)],
+                            [gs[t].lpath for t in range(TS)], n+1], f)
         if Et.Converged:
-            print 'Transition Path Converged! in', n+1,'iterations with tolerance level', Et.tol
+            print 'Transition Path Converged! in', n+1,'iterations with', Et.tol
             break
         if n >= N-1:
-            print 'Transition Path Not Converged! in', n+1,'iterations with tolerance level', Et.tol
+            print 'Transition Path Not Converged! in', n+1,'iterations with', Et.tol
             break
 
 
@@ -385,8 +391,8 @@ def spath(g):
 
 
 def tpath():
-    with open('transition.pickle','rb') as f:
-        [Et, a, c, l] = pickle.load(f)
+    with open('E.pickle','rb') as f:
+        [E0, E1, Et, it] = pickle.load(f)
     fig = plt.figure(facecolor='white')
     ax = fig.add_subplot(111)
     ax1 = fig.add_subplot(321)
