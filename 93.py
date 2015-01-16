@@ -47,6 +47,7 @@ class state:
         self.k = array([k for t in range(TS)], dtype=float)
         self.L = L = array([l*(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
         self.K = K = array([k*L[t] for t in range(TS)], dtype=float)
+        self.C = C = array([0 for t in range(TS)], dtype=float)
         self.Beq = Beq = array([K[t]/Pt[t]*sum((1-self.sp[t])*self.pop[t]) for t in range(TS)], dtype=float)
         self.y = y = array([k**alpha for t in range(TS)], dtype=float)
         self.r = r = array([(alpha)*k**(alpha-1) - delta for t in range(TS)], dtype=float)
@@ -71,11 +72,15 @@ class state:
             if t <= TS-T-1:
                 K1[t] = sum([gs[t+y].apath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
                 L1[t] = sum([gs[t+y].epath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
-                self.Beq[t] = sum([gs[t+y].apath[-(y+1)]*self.pop[t,-(y+1)]*(1-self.sp[t,-(y+1)]) for y in range(T)])
+                self.Beq[t] = sum([gs[t+y].apath[-(y+1)]*self.pop[t,-(y+1)]
+                                    /self.sp[t,-(y+1)]*(1-self.sp[t,-(y+1)]) for y in range(T)])
+                self.C[t] = sum([gs[t+y].cpath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
             else:
                 K1[t] = sum([gs[-1].apath[-(y+1)]*self.pop[t][-(y+1)] for y in range(T)])
                 L1[t] = sum([gs[-1].epath[-(y+1)]*self.pop[t][-(y+1)] for y in range(T)])
-                self.Beq[t] = sum([(gs[-1].apath[-(y+1)]*self.pop[t,-(y+1)]*(1-self.sp[t,-(y+1)])) for y in range(T)])
+                self.Beq[t] = sum([gs[-1].apath[-(y+1)]*self.pop[t,-(y+1)]
+                                    /self.sp[t,-(y+1)]*(1-self.sp[t,-(y+1)]) for y in range(T)])
+                self.C[t] = sum([gs[-1].cpath[-(y+1)]*self.pop[t][-(y+1)] for y in range(T)])
         self.Converged = (max(absolute(K1-self.K)) < self.tol*max(absolute(self.K)))
         """ Update the economy's aggregate K and N with weight phi on the old """
         self.K = self.phi*self.K + (1-self.phi)*K1
@@ -283,53 +288,55 @@ def popef():
 def findinitial(ng0=1.01, ng1=1.00, W=45, R=30, TG=4, alpha=0.3, beta=0.96, delta=0.08):
     start_time = datetime.now()
     """Find Old and New Steady States with population growth rates ng and ng1"""
-    e0, g0 = value(state(TG=1,W=W,R=R,ng=ng0,alpha=alpha,delta=delta),
+    E0, g0 = value(state(TG=1,W=W,R=R,ng=ng0,alpha=alpha,delta=delta),
                     cohort(beta=beta,W=W,R=R))
-    e1, g1 = value(state(TG=1,W=W,R=R,ng=ng1,alpha=alpha,delta=delta),
+    E1, g1 = value(state(TG=1,W=W,R=R,ng=ng1,alpha=alpha,delta=delta),
                     cohort(beta=beta,W=W,R=R))
+    T = W + R
+    TS = T*TG
     """Initialize Transition Path for t = 0,...,TS-1"""
-    et= state(TG=TG,W=W,R=R,ng=ng0,dng=(ng1-ng0),k=e1.k[0],alpha=alpha,delta=delta)
-    et.k[:et.TS-et.T] = linspace(e0.k[-1],e1.k[0],et.TS-et.T)
-    et.update()
+    Et= state(TG=TG,W=W,R=R,ng=ng0,dng=(ng1-ng0),k=E1.k[0],alpha=alpha,delta=delta)
+    Et.k[:TS-T] = linspace(E0.k[-1],E1.k[0],TS-T)
+    Et.update()
     with open('initial.pickle','wb') as f:
-        pickle.dump([e0, e1, et, g0.apath, g1.apath, g1.epath], f)
+        pickle.dump([E0, E1, Et, g0.apath, g0.epath, g1.apath, g1.epath], f)
     """http://stackoverflow.com/questions/2204155/
     why-am-i-getting-an-error-about-my-class-defining-slots-when-trying-to-pickl"""
     end_time = datetime.now()
     print('Duration: {}'.format(end_time - start_time))
-    return e0, e1, et, g0, g1
 
 
-def transition(N=3,beta=0.96):
+def transition(N=15,beta=0.96):
     with open('initial.pickle','rb') as f:
-        [e0, e1, et, a0, a1, el1] = pickle.load(f)
+        [E0, E1, Et, a0, e0, a1, e1] = pickle.load(f)
+    T = Et.T
+    TS = Et.TS
     """Generate TS cohorts who die in t = 0,...,TS-1 with initial asset g0.apath[-t-1]"""
-    gs = [cohort(beta=beta,W=et.W,R=et.R,y=t,a0=(a0[-t-1] if t <= et.T-2 else 0))
-            for t in range(et.TS)]
+    gs = [cohort(beta=beta,W=Et.W,R=Et.R,y=t,a0=(a0[-t-1] if t <= T-2 else 0))
+            for t in range(TS)]
     """Iteratively Calculate all generations optimal consumption and labour supply"""
     for n in range(N):
         start_time = datetime.now()
         for g in gs:
-            if (g.y >= et.T-1) and (g.y <= et.TS-(et.T+1)):
-                g.findvpath(et.p[:,g.y-et.T+1:g.y+1])
-            elif (g.y < et.T-1):
-                g.findvpath(et.p[:,:g.y+1])
+            if (g.y >= T-1) and (g.y <= TS-(T+1)):
+                g.findvpath(Et.p[:,g.y-T+1:g.y+1])
+            elif (g.y < T-1):
+                g.findvpath(Et.p[:,:g.y+1])
             else:
-                g.apath, g.epath = a1, el1
-            print 'iterating cohort:',g.y+1, '...'
+                g.apath, g.epath = a1, e1
         et.aggregate(gs)
         et.update()
-        print 'after',n+1,'iterations over all cohorts,','r:', et.r[0::30]
+        print 'after',n+1,'iterations over all cohorts,','r:', E0.r[0], Et.r[0::30]
         end_time = datetime.now()
         print('Duration: {}'.format(end_time - start_time))
         with open('transition.pickle','wb') as f:
-            pickle.dump([et, [gs[t].apath for t in range(et.TS)], 
-                [gs[t].cpath for t in range(et.TS)], [gs[t].lpath for t in range(et.TS)]], f)
-        if et.Converged:
-            print 'Transition Path Converged! in', n+1,'iterations with tolerance level', et.tol
+            pickle.dump([Et, [gs[t].apath for t in range(TS)], 
+                [gs[t].cpath for t in range(et.TS)], [gs[t].lpath for t in range(TS)]], f)
+        if Et.Converged:
+            print 'Transition Path Converged! in', n+1,'iterations with tolerance level', Et.tol
             break
         if n >= N-1:
-            print 'Transition Path Not Converged! in', n+1,'iterations with tolerance level', et.tol
+            print 'Transition Path Not Converged! in', n+1,'iterations with tolerance level', Et.tol
             break
 
 
@@ -377,31 +384,37 @@ def spath(g):
     # plt.close() # plt.close("all")
 
 
-def tpath(et):
+def tpath():
     with open('transition.pickle','rb') as f:
-        [et, a, c, l] = pickle.load(f)
+        [Et, a, c, l] = pickle.load(f)
     fig = plt.figure(facecolor='white')
     ax = fig.add_subplot(111)
-    ax1 = fig.add_subplot(221)
-    ax2 = fig.add_subplot(222)
-    ax3 = fig.add_subplot(223)
-    ax4 = fig.add_subplot(224)
+    ax1 = fig.add_subplot(321)
+    ax2 = fig.add_subplot(322)
+    ax3 = fig.add_subplot(323)
+    ax4 = fig.add_subplot(324)
+    ax5 = fig.add_subplot(325)
+    ax6 = fig.add_subplot(326)
     fig.subplots_adjust(hspace=.5, wspace=.3, left=None, right=None, top=None, bottom=None)
     ax.spines['top'].set_color('none')
     ax.spines['bottom'].set_color('none')
     ax.spines['left'].set_color('none')
     ax.spines['right'].set_color('none')
     ax.tick_params(labelcolor='w', top='off', bottom='off', left='off', right='off')
-    ax1.plot(et.K)
-    ax2.plot(et.L)
-    ax3.plot(et.r)
-    ax4.plot(et.w)
+    ax1.plot(Et.k)
+    ax2.plot(Et.r)
+    ax3.plot(Et.L)
+    ax4.plot(Et.w)
+    ax5.plot(Et.K)
+    ax6.plot(Et.C)
     ax.set_xlabel('generation')
-    ax.set_title('R:' + str(e.R) + 'W:' + str(e.W) + 'TS:' + str(e.TS), y=1.08)
-    ax1.set_title('Capital')
-    ax2.set_title('Labor')
-    ax3.set_title('Interest Rate')
+    ax.set_title('R:' + str(Et.R) + 'W:' + str(Et.W) + 'TS:' + str(Et.TS), y=1.08)
+    ax1.set_title('Capital/Labor')
+    ax2.set_title('Interest Rate')
+    ax3.set_title('Labor')
     ax4.set_title('Wage')
+    ax5.set_title('Capital')
+    ax4.set_title('Consumption')
     plt.show()
     # time.sleep(1)
     # plt.close() # plt.close("all")
