@@ -324,14 +324,14 @@ def transition(N=15,beta=0.96):
                 g.findvpath(Et.p[:,:g.y+1])
             else:
                 g.apath, g.epath = a1, e1
-        et.aggregate(gs)
-        et.update()
+        Et.aggregate(gs)
+        Et.update()
         print 'after',n+1,'iterations over all cohorts,','r:', E0.r[0], Et.r[0::30]
         end_time = datetime.now()
         print('Duration: {}'.format(end_time - start_time))
         with open('transition.pickle','wb') as f:
             pickle.dump([Et, [gs[t].apath for t in range(TS)], 
-                [gs[t].cpath for t in range(et.TS)], [gs[t].lpath for t in range(TS)]], f)
+                [gs[t].cpath for t in range(TS)], [gs[t].lpath for t in range(TS)]], f)
         if Et.Converged:
             print 'Transition Path Converged! in', n+1,'iterations with tolerance level', Et.tol
             break
