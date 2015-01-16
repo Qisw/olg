@@ -420,7 +420,7 @@ def tpath():
     ax3.set_title('Labor')
     ax4.set_title('Wage')
     ax5.set_title('Capital')
-    ax4.set_title('Consumption')
+    ax6.set_title('Consumption')
     plt.show()
     # time.sleep(1)
     # plt.close() # plt.close("all")
