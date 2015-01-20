@@ -169,6 +169,7 @@ class cohort:
                     def objfn(a1): # Define objective function for optimal a'
                         return -self.findv(y, self.aa[i], a1, p)
                     result = minimize_scalar(objfn, bracket=(a0,b0,c0), method='Golden')
+                    #‘Brent’,‘Bounded’,‘Golden’
                     self.a[y,i] = result.x
                 # print self.a[y,i]
                 # Computing consumption and labor
@@ -259,6 +260,70 @@ class cohort:
     def ul(self, c, l):
         # marginal utility w.r.t. labor
         return -(1-self.gamma)*self.util(c, l)*(1-self.sigma)/(1-l)
+
+
+    def IteratePaths(self, a0, p):
+        """ This function numerically finds optimal choices over RT years,
+        from T-RT+1 to T yrs-old such that asset level at T-RT+1 equals to a0,
+        which is the amount of asset that T-RT+1 yrs-old agent holds in the old SS. """
+        [r, w, b, tr, tw, tb, Tr] = p
+        if self.T == 1:
+            self.apath[-1] = a0
+            self.cpath[-1] = self.apath[-1]*(1+(1-tr[-1])*r[-1]) + b[-1] + Tr[-1]
+            self.npath[-1] = 0
+            self.upath[-1] = self.util(self.cpath[-1], self.lpath[-1])
+        else:
+            a1, aT = [-1,], []
+            for q in range(self.Nq):
+                if q == 0:
+                    self.apath[-1] = 0.2
+                elif q == 1:
+                    self.apath[-1] = 0.3
+                else:
+                    self.apath[-1] = self.clip(aT[-1]-(aT[-1]-aT[-2])*(a1[-1]-a0)/(a1[-1]-a1[-2]))
+                self.lpath[-1] = 0
+                self.cpath[-1] = self.apath[-1]*(1 +(1-tr[-1])*r[-1]) + b[-1] + Tr[-1]
+                for y in range(-2,-(self.T+1),-1):     # y = -2, -3,..., -RT
+                    self.apath[y], self.lpath[y], self.cpath[y] = self.DirectSolve(y, p)
+                aT.append(self.apath[-1])
+                a1.append(self.apath[-self.T])
+                if (absolute(self.apath[-self.T] - a0) < self.tol):
+                    break
+            for y in range(-1, -(self.T+1), -1):
+                self.upath[y] = self.util(self.cpath[y], self.lpath[y])
+        return self.apath, self.cpath, self.lpath
+
+
+    def DirectSolve(self, y, p):
+        """ analytically solve for capital and labor supply given next two periods 
+        capital. y is from -2 to -60, i.e., through the next-to-last to the first """
+        [r, w, b, tr, tw, tb, Tr] = p
+        # print y, p.shape
+        if y >= -self.R:
+            a1 = self.apath[y+1]
+            a2 = (0 if y == -2 else self.apath[y+2])
+            def foc(a):         # FOC for the retired
+                c0 = (1+(1-tr[y])*r[y])*a + b[y] + Tr[y] - a1
+                c1 = (1+(1-tr[y+1])*r[y+1])*a1 + b[y+1] + Tr[y+1] - a2
+                return self.uc(c0,0) - self.beta*self.uc(c1,0)*(1+(1-tr[y+1])*r[y+1])
+            a, n = fsolve(foc, a1), 0
+            c = (1 + (1-tr[y])*r[y])*a + b[y] + Tr[y] - a1
+        else:
+            a1, a2 = self.apath[y+1], self.apath[y+2]
+            if y == -(self.R+1):
+                n1 = 0
+                c1 = (1+(1-tr[y+1])*r[y+1])*a1 + b[y+1] + Tr[y+1]- a2
+            else:
+                n1 = self.lpath[y+1]
+                c1 = (1+(1-tr[y+1])*r[y+1])*a1 + (1-tw[y+1]-tb[y+1])*w[y+1]*self.ef[y+1]*n1 - a2
+            def foc((a0,n0)):   # FOC for the workers
+                c0 = (1+(1-tr[y])*r[y])*a0 + (1-tw[y]-tb[y])*w[y]*self.ef[y]*n0 - a1
+                return self.uc(c0,n0) - self.beta*self.uc(c1,n1)*(1+(1-tr[y+1])*r[y+1]),\
+                    (1-tw[y]-tb[y])*w[y]*self.ef[y]*self.uc(c0,n0) + self.ul(c0,n0)
+            a, n = fsolve(foc,(a1,n1))
+            c = (1+(1-tr[y])*r[y])*a + (1-tw[y]-tb[y])*w[y]*self.ef[y]*n - a1
+        return a, n, c
+
 
 
 """The following are procedures to get steady state of the economy using direct 
@@ -428,9 +493,9 @@ def tpath():
 def direct(e, g, N=15):
     start_time = datetime.now()
     for n in range(N):
-        e.UpdateStates()
-        g.IteratePaths(e.T, 0, e.p)
-        e.Aggregate(g)
+        e.update()
+        g.IteratePaths(0, e.p)
+        e.aggregate([g])
         if e.Converged:
             print 'Economy Converged to SS! in',n+1,'iterations with', e.tol
             break
@@ -440,6 +505,7 @@ def direct(e, g, N=15):
     end_time = datetime.now()
     print('Duration: {}'.format(end_time - start_time))
     return e, g
+
 
 def transition_direct(zeta=0.3, ng=0.01, ng1=0.0, N=3, W=45, R=30, alpha=0.35, delta=0.06, 
     phi=0.8, TG=4, beta=0.96, gamma=0.35, sigma=2.0, tol=0.001):
@@ -464,9 +530,9 @@ def transition_direct(zeta=0.3, ng=0.01, ng1=0.0, N=3, W=45, R=30, alpha=0.35, d
         et.UpdateStates()
         for g in gs:
             if (g.y >= T-1) and (g.y <= TS-(T+1)):
-                g.IteratePaths(T, 0, et.p[:,g.y-T+1:g.y+1])
+                g.IteratePaths(0, et.p[:,g.y-T+1:g.y+1])
             elif (g.y < T-1):
-                g.IteratePaths(g.y+1, g0.apath[T-g.y-1], et.p[:,:g.y+1])
+                g.IteratePaths(g0.apath[T-g.y-1], et.p[:,:g.y+1])
             else:
                 g.apath, g.cpath, g.lpath = g1.apath, g1.cpath, g1.lpath
         et.Aggregate(gs)
