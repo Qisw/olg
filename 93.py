@@ -169,7 +169,6 @@ class cohort:
                     def objfn(a1): # Define objective function for optimal a'
                         return -self.findv(y, self.aa[i], a1, p)
                     result = minimize_scalar(objfn, bracket=(a0,b0,c0), method='Golden')
-                    #‘Brent’,‘Bounded’,‘Golden’
                     self.a[y,i] = result.x
                 # print self.a[y,i]
                 # Computing consumption and labor
