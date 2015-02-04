@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Jan. 12, 2015, Hyun Chang Yi
 Computes the model of Section 9.3. in Heer/Maussner using 
@@ -13,6 +14,9 @@ from matplotlib import pyplot as plt
 from datetime import datetime
 import time
 import pickle
+
+from multiprocessing import Process, Lock, Manager
+
 
 class state:
     """ This class is just a "struct" to hold  the collection of primitives defining
@@ -265,25 +269,6 @@ class cohort:
 age-profile iteration and projection method"""
 
 
-def popef():
-    with open('pop5.pickle','rb') as f:
-        pop5 = pickle.load(f)
-        pop5 = pop5[0::5]
-        pop5 = pop5/(pop5[0,0]*1.0)
-    T = pop5.shape[1]
-    sp = [[1.0,] for t in range(pop5.shape[0]-1)]
-    for t in range(pop5.shape[0]-1):
-        for y in range(T-1):
-            sp[t].append(pop5[t+1,y+1]/(pop5[t,y]*1.0))
-    ng0 = pop5[1,0]/(pop5[0,0]*1.0) - 1
-    ng1 = pop5[-1,0]/(pop5[-2,0]*1.0) - 1
-    with open('ef5.pickle','rb') as f:
-        ef5 = array(pickle.load(f))
-        ef5 = ef5/max(ef5*1.0)
-    W = ef5.shape[0]
-    R = T - W
-    return pop5, sp
-
 def findinitial(ng0=1.01, ng1=1.00, W=45, R=30, TG=4, alpha=0.3, beta=0.96, delta=0.08):
     start_time = datetime.now()
     """Find Old and New Steady States with population growth rates ng and ng1"""
@@ -306,6 +291,16 @@ def findinitial(ng0=1.01, ng1=1.00, W=45, R=30, TG=4, alpha=0.3, beta=0.96, delt
     end_time = datetime.now()
     print('Duration: {}'.format(end_time - start_time))
 
+#병렬처리를 위한 for loop 내 로직 분리
+def transition_sub1(g,T,TS,Et,a1,e1):
+    if (g.y >= T-1) and (g.y <= TS-(T+1)):
+        g.findvpath(Et.p[:,g.y-T+1:g.y+1])
+    elif (g.y < T-1):
+        g.findvpath(Et.p[:,:g.y+1])
+    else:
+        g.apath, g.epath = a1, e1
+
+
 
 def transition(N=15,beta=0.96):
     with open('E.pickle','rb') as f:
@@ -320,18 +315,35 @@ def transition(N=15,beta=0.96):
     """Iteratively Calculate all generations optimal consumption and labour supply"""
     for n in range(N):
         start_time = datetime.now()
+        print 'transition('+str(n)+') is start : {}'.format(start_time) 
+        jobs = []
         for g in gs:
-            if (g.y >= T-1) and (g.y <= TS-(T+1)):
-                g.findvpath(Et.p[:,g.y-T+1:g.y+1])
-            elif (g.y < T-1):
-                g.findvpath(Et.p[:,:g.y+1])
-            else:
-                g.apath, g.epath = a1, e1
+            p = Process(target=transition_sub1, args=(g,T,TS,Et,a1,e1))
+            p.start()
+            jobs.append(p)
+            #병렬처리 개수 지정 20이면 20개 루프를 동시에 병렬로 처리
+            if len(jobs) % 20 == 0:
+                for p in jobs:
+                    p.join()
+                print 'transition('+str(n)+') is progressing : {}'.format(datetime.now())
+                jobs=[]
+#            start_time_gs = datetime.now()
+#            if (g.y >= T-1) and (g.y <= TS-(T+1)):
+#                g.findvpath(Et.p[:,g.y-T+1:g.y+1])
+#            elif (g.y < T-1):
+#                g.findvpath(Et.p[:,:g.y+1])
+#            else:
+#                g.apath, g.epath = a1, e1
+#            print('transition gs loop: {}'.format(datetime.now() - start_time_gs))
+        if len(jobs) > 0:
+            for p in jobs:
+                p.join()
         Et.aggregate(gs)
         Et.update()
         print 'after',n+1,'iterations over all cohorts,','r:', E0.r[0], Et.r[0::30]
         end_time = datetime.now()
-        print('Duration: {}'.format(end_time - start_time))
+        print 'transition('+str(n)+') is end : {}'.format(end_time) 
+        print 'transition n loop: {}'.format(end_time - start_time)
         with open('E.pickle','wb') as f:
             pickle.dump([E0, E1, Et, n+1], f)
         with open('GS.pickle','wb') as f:
@@ -423,59 +435,8 @@ def tpath():
     plt.show()
     # time.sleep(1)
     # plt.close() # plt.close("all")
-
-
-def direct(e, g, N=15):
-    start_time = datetime.now()
-    for n in range(N):
-        e.UpdateStates()
-        g.IteratePaths(e.T, 0, e.p)
-        e.Aggregate(g)
-        if e.Converged:
-            print 'Economy Converged to SS! in',n+1,'iterations with', e.tol
-            break
-        if n >= N-1:
-            print 'Economy Not Converged in',n+1,'iterations with', e.tol
-            break
-    end_time = datetime.now()
-    print('Duration: {}'.format(end_time - start_time))
-    return e, g
-
-def transition_direct(zeta=0.3, ng=0.01, ng1=0.0, N=3, W=45, R=30, alpha=0.35, delta=0.06, 
-    phi=0.8, TG=4, beta=0.96, gamma=0.35, sigma=2.0, tol=0.001):
-    start_time = datetime.now()
-    T = W + R
-    TS = T*TG
-    """Find Old and New Steady States with population growth rates ng and ng1"""
-    e0 = economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,ng=ng)
-    e1 = economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=1,W=W,R=R,ng=ng1)   
-    e0, g0 = direct(e0, generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R))
-    e1, g1 = direct(e1, generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R))
-    """Initialize Transition Dynamics of Economy for t = 0,...,TS-1"""
-    et= economy(alpha=alpha,delta=delta,phi=phi,tol=tol,TG=TG,W=W,R=R,ng=ng1,
-        k=e1.K[0],l=e1.L[0])
-    et.K[0:TS-T] = linspace(e0.K[-1],e1.K[0],TS-T)
-    et.L[0:TS-T] = linspace(e0.L[-1],e1.L[0],TS-T)
-    """Construct TS generations who die in t = 0,...,TS-1, respectively"""
-    gs = [generation(beta=beta,sigma=sigma,gamma=gamma,tol=tol,W=W,R=R,y=t)
-            for t in range(TS)]
-    """Iteratively Calculate all generations optimal consumption and labour supply"""
-    for n in range(N):
-        et.UpdateStates()
-        for g in gs:
-            if (g.y >= T-1) and (g.y <= TS-(T+1)):
-                g.IteratePaths(T, 0, et.p[:,g.y-T+1:g.y+1])
-            elif (g.y < T-1):
-                g.IteratePaths(g.y+1, g0.apath[T-g.y-1], et.p[:,:g.y+1])
-            else:
-                g.apath, g.cpath, g.lpath = g1.apath, g1.cpath, g1.lpath
-        et.Aggregate(gs)
-        if et.Converged:
-            print 'Transition Path Converged! in', n+1,'iterations with', et.tol
-            break
-        if n >= N-1:
-            print 'Transition Path Not Converged! in', n+1,'iterations with', et.tol
-            break        
-    end_time = datetime.now()
-    print('Duration: {}'.format(end_time - start_time))
-    return et, gs, g0, g1
+    
+    
+if __name__ == '__main__':
+    findinitial()
+    transition()
