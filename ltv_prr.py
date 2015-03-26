@@ -22,7 +22,7 @@ class state:
     """ This class is just a "struct" to hold  the collection of primitives defining
     an economy in which one or multiple generations live """
     def __init__(self, alpha=0.3, delta=0.08, phi=0.8, tol=0.01,
-        tr = 0.15, tw = 0.11, zeta=0.15, gy = 0.195,
+        tr = 0.15, tw = 0.11, zeta=0.15, gy = 0.195, qh = 10, qr = 0.5,
         k=3.5, l=0.3, TG=4, W=45, R=30, ng = 1.01, dng = 0.0):
         # tr = 0.429, tw = 0.248, zeta=0.5, gy = 0.195, in Section 9.3. in Heer/Maussner
         """tr, tw and tb are tax rates on capital return, wage and tax for pension.
@@ -49,7 +49,8 @@ class state:
         self.tw = array([tw for t in range(TS)], dtype=float)
         self.gy = array([gy for t in range(TS)], dtype=float)
         self.k = array([k for t in range(TS)], dtype=float)
-        self.L = L = array([l*(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
+        self.L = L = array([(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
+        #self.L = L = array([l*(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
         self.K = K = array([k*L[t] for t in range(TS)], dtype=float)
         self.C = C = array([0 for t in range(TS)], dtype=float)
         self.Beq = Beq = array([K[t]/Pt[t]*sum((1-self.sp[t])*self.pop[t]) for t in range(TS)], dtype=float)
@@ -61,8 +62,10 @@ class state:
         self.Tax = Tax = array([tw*w[t]*L[t]+tr*r[t]*K[t] for t in range(TS)], dtype=float)
         self.G = G = array([gy*y[t]*L[t] for t in range(TS)], dtype=float)
         self.Tr = array([(Tax[t]+Beq[t]-G[t])/Pt[t] for t in range(TS)], dtype=float)
+        self.qh = array([qh for t in range(TS)], dtype=float)
+        self.qr = array([qr for t in range(TS)], dtype=float)
         # container for r, w, b, tr, tw, tb, Tr
-        self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr])
+        self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr, self.qh, self.qr])
         # whether the capital stock has converged
         self.Converged = False
 
@@ -145,8 +148,10 @@ class cohort:
         In direct method, those paths are directly calculated, while in the value function
         method the paths are calculated from value and policy functions """
         self.apath = array([a0 for y in range(T)], dtype=float)
+        self.hpath = array([0 for y in range(T)], dtype=float)
         self.cpath = array([0 for y in range(T)], dtype=float)
-        self.lpath = array([0 for y in range(T)], dtype=float)
+        self.rpath = array([0 for y in range(T)], dtype=float)
+        self.spath = array([0 for y in range(T)], dtype=float)
         self.epath = array([0 for y in range(T)], dtype=float) # labor supply in efficiency unit
         self.upath = array([0 for y in range(T)], dtype=float)
 
@@ -185,31 +190,53 @@ class cohort:
                         result = minimize_scalar(objfn, bracket=(a0,b0,c0), method='Golden')
                         self.ao[y,h,i] = result.x
                     # print self.a[y,i]
-                    # Computing consumption and labor
-                    if y >= -self.R:
-                        self.co[y,h,i] = (1+(1-tr[y])*r[y])*self.aa[i] + b[y] + Tr[y] - self.a[y,i]
-                        self.l[y,i] = 0
-                    else:
-                        self.c[y,i], self.l[y,i] = self.findcl(y, self.aa[i], self.a[y,i], p)
+                    # Compute consumption, rent and house
 
-                    self.v[y,h,i] = self.util(self.c[y,i], self.l[y,i]) \
-                                    + self.beta*self.vtilde[y+1](self.a[y,i])
-                self.vtilde[y] = interp1d(self.aa, self.v[y], kind='cubic')
+                    v0 = self.neg
+                    for h1 in self.hh:
+                        if y >= -self.R:    # y = -2, -3, ..., -60
+                            budget = self.aa[i]*(1+(1-tr[y])*r[y]) + (self.hh[h]-h1)*qh[y] \
+                                        - self.hh[h]*qh[y]*(self.hh[h]!=h1)*self.tcost \
+                                        + b[y] + Tr[y] - self.ao[y,h,i]
+                        else:
+                            budget = self.aa[i]*(1+(1-tr[y])*r[y]) + (self.hh[h]-h1)*qh[y] \
+                                        - self.hh[h]*qh[y]*(self.hh[h]!=h1)*self.tcost \
+                                        + Tr[y] - self.ao[y,h,i] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
+                        c1 = (budget+qr[y]*h0)/(1+self.psi)
+                        r1 = (budget*self.psi-qr[y]*h0)/((1+self.psi)*qh[-1])
+                        v1 = self.util(c1, r1+self.hh[h]) + self.beta*self.vtilde[y+1,h1](self.ao[y,h,i]) \
+                                if budget > 0 else self.neg
+                        if v1 >= v0:
+                            v0, self.co[y,h,i], self.ro[y,h,i], self.ho[y,h,i] = v1, c1, r1, h1
+                self.vtilde[y,h] = interp1d(self.aa, self.v[y,h], kind='cubic')
         """ find asset and labor supply profiles over life-cycle from value function"""
         # generate each generation's asset, consumption and labor supply forward
         for y in range(T-1):    # y = 0, 1,..., 58
-            self.apath[y+1] = self.clip(interp1d(self.aa, self.a[y], kind='cubic')(self.apath[y]))
-            if y >= T-self.R:
-                self.cpath[y] = (1+(1-tr[y])*r[y])*self.apath[y] + b[y] + Tr[y] - self.apath[y+1]
-                self.lpath[y] = 0
-            else:
-                self.cpath[y], self.lpath[y] = self.findcl(y, self.apath[y], self.apath[y+1], p)
-            self.upath[y] = self.util(self.cpath[y], self.lpath[y])
+            self.apath[y+1] = self.clip(interp1d(self.aa, self.ao[y,self.hpath[y]], kind='cubic')(self.apath[y]))
+            v0 = self.neg
+            for h1 in self.hh:
+                if y >= T-self.R:    # y = -2, -3, ..., -60
+                    budget = self.apath[y]*(1+(1-tr[y])*r[y]) + (self.hpath[y]-h1)*qh[y] \
+                                - self.hpath[y]*qh[y]*(self.hpath[y]!=h1)*self.tcost \
+                                + b[y] + Tr[y] - self.apath[y+1]
+                else:
+                    budget = self.apath[y]*(1+(1-tr[y])*r[y]) + (self.hpath[y]-h1)*qh[y] \
+                                - self.hpath[y]*qh[y]*(self.hpath[y]!=h1)*self.tcost \
+                                + Tr[y] - self.apath[y+1] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
+                c1 = (budget+qr[y]*self.hpath[y])/(1+self.psi)
+                r1 = (budget*self.psi-qr[y]*self.hpath[y])/((1+self.psi)*qh[-1])
+                v1 = self.util(c1, r1+self.hpath[y]) + self.beta*self.vtilde[y+1,h1](self.apath[y+1]) \
+                        if budget > 0 else self.neg
+                if v1 >= v0:
+                    v0, self.cpath[y], self.rpath[y], self.hpath[y+1], self.spath[y] = v1, c1, r1, h1, r1+self.hpath[y]
+            self.upath[y] = self.util(self.cpath[y], self.spath[y])
         # the oldest generation's consumption and labor supply
-        self.cpath[T-1] = (1+(1-tr[T-1])*r[T-1])*self.apath[T-1] + b[T-1] + Tr[T-1]
-        self.lpath[T-1] = 0
-        self.upath[T-1] = self.util(self.cpath[T-1], self.lpath[T-1])
-        self.epath = self.lpath*self.ef[-self.T:]
+        budget = (1+(1-tr[T-1])*r[T-1])*self.apath[T-1] + b[T-1] + Tr[T-1] + self.hpath[T-1]*qh[T-1]*(1-self.tcost)
+        self.cpath[T-1] = (budget+qr[T-1]*self.hpath[T-1])/(1+self.psi)
+        self.rpath[T-1] = (budget*self.psi-qr[T-1]*self.hpath[T-1])/((1+self.psi)*qh[T-1])
+        self.spath[T-1] = self.rpath[T-1]
+        self.upath[T-1] = self.util(self.cpath[T-1], self.rpath[T-1])
+        self.epath = self.ef[-self.T:]
 
 
     def GetBracket(self, y, h, l, m, p):
@@ -238,23 +265,18 @@ class cohort:
         next period asset a1, current period consumption c and labor n
         a1 is always within aL and aH """
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
-        if y >= -self.R:    # y = -2, -3, ..., -60
-            for h in range(self.hN):
-                if h0 == h:
-                    budget = self.aa[i]*(1+(1-tr[-1])*r[-1]) + b[-1] + Tr[-1]
-                    self.co[-1,h,i] = budget/(1+self.psi)
-                    self.ro[-1,h,i] = budget*self.psi/((1+self.psi)*qh[-1])
-                    self.v[-1,h,i] = self.util(self.co[-1,h,i], self.ro[-1,h,i])
-
-
-
-                    budget = self.aa[i]*(1+(1-tr[-1])*r[-1]) + self.hh[h]*qh[-1]*(1-self.tcost) + b[-1] + Tr[-1]
-                v = 
-            c, l = (1+(1-tr[y])*r[y])*a0 + b[y] + Tr[y] - a1, 0
-        else:
-            c, l = self.findcl(y, a0, a1, p)
-        v = self.util(c,l) + self.beta*self.vtilde[y+1](a1)
-        return v if c >= 0 else self.neg
+        v0 = self.neg
+        for h1 in range(self.hN):
+            if y >= -self.R:    # y = -2, -3, ..., -60
+                budget = a0*(1+(1-tr[y])*r[y]) + (h0-h1)*qh[y] - h0*qh[y]*(h0!=h1)*self.tcost + b[y] + Tr[y] - a1
+            else:
+                budget = a0*(1+(1-tr[y])*r[y]) + (h0-h1)*qh[y] - h0*qh[y]*(h0!=h1)*self.tcost + Tr[y] - a1 \
+                               + (1-tw[y]-tb[y])*w[y]*self.ef[y]
+            co = (budget+qr[y]*h0)/(1+self.psi)
+            ro = (budget*self.psi-qr[y]*h0)/((1+self.psi)*qh[-1])
+            v1 = self.util(co, ro) + self.beta*self.vtilde[y+1,h1](a1) if budget > 0 else self.neg
+            v0 = max(v0,v1)
+        return v0
 
 
     def findcl(self, y, a0, a1, p):
@@ -276,15 +298,6 @@ class cohort:
         return log(c) + self.psi*log(s)
         # (((c+self.psi)**self.gamma*(1-l)**(1-self.gamma))**(1-self.sigma))/(1-self.sigma)
 
-
-    def uc(self, c, l):
-        # marginal utility w.r.t. consumption
-        return self.gamma*self.util(c, l)*(1-self.sigma)/(c*1.0)
-
-
-    def ul(self, c, l):
-        # marginal utility w.r.t. labor
-        return -(1-self.gamma)*self.util(c, l)*(1-self.sigma)/(1-l)
 
 
 """The following are procedures to get steady state of the economy using direct 
