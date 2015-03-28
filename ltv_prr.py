@@ -142,7 +142,7 @@ class cohort:
     """ This class is just a "struct" to hold the collection of primitives defining
     a generation """
     def __init__(self, beta=0.95, sigma=2.0, gamma=0.32, aH=5.0, aL=0.0, y=-1,
-        aN=101, psi=0.03, tol=0.01, neg=-1e10, W=45, R=30, a0 = 0, tcost = 0.0):
+        aN=101, psi=0.03, tol=0.01, neg=-1e5, W=45, R=30, a0 = 0, tcost = 0.0):
         self.beta, self.sigma, self.gamma, self.psi = beta, sigma, gamma, psi
         self.R, self.W, self.y = R, W, y
         self.tcost = tcost
@@ -230,12 +230,14 @@ class cohort:
                         if budget > 0:
                             v1 = self.util(c1, r1+hh[h]) + beta*self.vtilde[y+1][h1](self.ao[y,h,i])
                         else:
-                            v1 = self.neg
+                            v1 = self.neg + budget
                         if v1 > v0:
                             v0, self.co[y,h,i], self.ro[y,h,i], self.ho[y,h,i] = v1, c1, r1, h1
                     if i == 60:
-                        print 'y=',y,'h=',h,'a=',self.aa[i],'an=%2.2f' %(self.ao[y,h,i]),'bracket=','(%2.2f'%(a0),',%2.2f'%(c0),')'
-                        print 'budget=%2.2f' %(budget),'c=%2.2f' %(c1),'r=%2.2f' %(r1),'h1=%2.2f' %(h1)
+                        print '\n'
+                        print 'y=',y,'    h=',h,'a=',self.aa[i] #'bracket=','(%2.2f'%(a0),',%2.2f'%(c0),')'
+                        print '------','h1=%2.2f' %(h1), 'an=%2.2f' %(self.ao[y,h,i])
+                        print '------','budget=%2.2f' %(budget),'c=%2.2f' %(c1),'r=%2.2f' %(r1)
                 self.vtilde[y][h] = interp1d(aa, self.v[y,h], kind='cubic')
             # if (y == -50):
             #     break
@@ -256,7 +258,7 @@ class cohort:
                 c1 = (budget+qr[y]*(self.hpath[y]+10))/(1+psi)
                 r1 = (budget*psi-qr[y]*(self.hpath[y]+10))/((1+psi)*qh[-1])
                 v1 = self.util(c1, r1+self.hpath[y]) + beta*self.vtilde[y+1][h1](self.apath[y+1]) \
-                        if budget > 0 else self.neg
+                        if budget > 0 else self.neg + budget
                 if v1 >= v0:
                     v0, self.cpath[y], self.rpath[y], self.hpath[y+1], self.spath[y] = v1, c1, r1, hh[h1], r1+self.hpath[y]
             self.upath[y] = self.util(self.cpath[y], self.spath[y])
@@ -295,6 +297,7 @@ class cohort:
         aa = self.aa
         # da = self.aH - self.aH
         v0 = self.neg
+        b = self.aL
         # di = 0.005
         for i in self.a10:
             v1 = self.findv(y, h, aa[l], i, p)
@@ -327,7 +330,7 @@ class cohort:
                             + (1-tw[y]-tb[y])*w[y]*self.ef[y]
             co = (budget+qr[y]*(hh[h0]+10))/(1+self.psi)
             ro = (budget*self.psi-qr[y]*(hh[h0]+10))/((1+self.psi)*qh[-1])
-            v1 = self.util(co, ro+hh[h0]) + self.beta*self.vtilde[y+1][h1](a1) if budget > 0 else self.neg
+            v1 = self.util(co, ro+hh[h0]) + self.beta*self.vtilde[y+1][h1](a1) if budget > 0 else self.neg + budget
             v0 = max(v0,v1)
             # if y == -2 and :
             #     print h0, a0, 'a1,h1=',a1, h1, 'v1=',v1
