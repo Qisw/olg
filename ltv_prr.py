@@ -9,7 +9,7 @@ HOUSEHOLD'S UTILITY FUNCTION IS DIFFERENT FROM THAT OF SECTION 9.1. AND 9.2.
 
 from scipy.interpolate import interp1d
 from scipy.optimize import fsolve, minimize_scalar
-from numpy import linspace, mean, array, zeros, absolute, loadtxt, dot, prod
+from numpy import linspace, mean, array, zeros, absolute, loadtxt, dot, prod, log, arange
 from matplotlib import pyplot as plt
 from datetime import datetime
 import time
@@ -21,16 +21,18 @@ from multiprocessing import Process, Lock, Manager
 class state:
     """ This class is just a "struct" to hold  the collection of primitives defining
     an economy in which one or multiple generations live """
-    def __init__(self, alpha=0.3, delta=0.08, phi=0.8, tol=0.01,
-        tr = 0.15, tw = 0.11, zeta=0.15, gy = 0.195, qh = 10, qr = 0.5,
-        k=3.5, l=0.3, TG=4, W=45, R=30, ng = 1.01, dng = 0.0):
+    def __init__(self, alpha=0.3, delta=0.08, phi=0.8, tol=0.01, Hs = 10,
+        tr = 0.01, tw = 0.21, zeta=0.35, gy = 0.195, qh = 10, qr = 0.3,
+        k=2.5, l=0.3, TG=4, W=45, R=30, ng = 1.01, dng = 0.0):
         # tr = 0.429, tw = 0.248, zeta=0.5, gy = 0.195, in Section 9.3. in Heer/Maussner
+        # tr = 0.01, tw = 0.11, zeta=0.15, gy = 0.195, qh = 0.1, qr = 0.09,
         """tr, tw and tb are tax rates on capital return, wage and tax for pension.
         tb is determined by replacement ratio, zeta, and other endogenous variables.
         gy is ratio of government spending over output.
         Transfer from government to households, Tr, is determined endogenously"""
         self.alpha, self.zeta, self.delta = alpha, zeta, delta
         self.phi, self.tol = phi, tol
+        self.Hs = Hs
         self.W, self.R = W, R
         self.T = T = (W+R)
         self.TS = TS = (W+R)*TG
@@ -50,6 +52,8 @@ class state:
         self.gy = array([gy for t in range(TS)], dtype=float)
         self.k = array([k for t in range(TS)], dtype=float)
         self.L = L = array([(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
+        self.Hd = array([self.Hs for t in range(TS)], dtype=float)
+        self.Rd = array([0 for t in range(TS)], dtype=float)
         #self.L = L = array([l*(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
         self.K = K = array([k*L[t] for t in range(TS)], dtype=float)
         self.C = C = array([0 for t in range(TS)], dtype=float)
@@ -74,28 +78,43 @@ class state:
         """Aggregate Capital, Labor in Efficiency unit and Bequest over all cohorts"""
         W, T, TS = self.W, self.T, self.TS
         """Aggregate all cohorts' capital and labor supply at each year"""
-        K1, L1 = array([[0 for t in range(TS)] for i in range(2)], dtype=float)
+        K1, L1, H1, R1 = array([[0 for t in range(TS)] for i in range(4)], dtype=float)
         for t in range(TS):
             if t <= TS-T-1:
                 K1[t] = sum([gs[t+y].apath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
                 L1[t] = sum([gs[t+y].epath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
+                H1[t] = sum([gs[t+y].hpath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
+                R1[t] = sum([gs[t+y].rpath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
                 self.Beq[t] = sum([gs[t+y].apath[-(y+1)]*self.pop[t,-(y+1)]
                                     /self.sp[t,-(y+1)]*(1-self.sp[t,-(y+1)]) for y in range(T)])
                 self.C[t] = sum([gs[t+y].cpath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
             else:
-                K1[t] = sum([gs[-1].apath[-(y+1)]*self.pop[t][-(y+1)] for y in range(T)])
-                L1[t] = sum([gs[-1].epath[-(y+1)]*self.pop[t][-(y+1)] for y in range(T)])
+                K1[t] = sum([gs[-1].apath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
+                L1[t] = sum([gs[-1].epath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
+                H1[t] = sum([gs[-1].hpath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
+                R1[t] = sum([gs[-1].rpath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
                 self.Beq[t] = sum([gs[-1].apath[-(y+1)]*self.pop[t,-(y+1)]
                                     /self.sp[t,-(y+1)]*(1-self.sp[t,-(y+1)]) for y in range(T)])
-                self.C[t] = sum([gs[-1].cpath[-(y+1)]*self.pop[t][-(y+1)] for y in range(T)])
+                self.C[t] = sum([gs[-1].cpath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
         self.Converged = (max(absolute(K1-self.K)) < self.tol*max(absolute(self.K)))
         """ Update the economy's aggregate K and N with weight phi on the old """
         self.K = self.phi*self.K + (1-self.phi)*K1
         self.L = self.phi*self.L + (1-self.phi)*L1
         self.k = self.K/self.L
+        self.Hd = H1
+        self.Rd = R1
         # print "K=%2.2f," %(self.K[0]),"L=%2.2f," %(self.L[0]),"K/L=%2.2f" %(self.k[0])
+
+
+    def printprices(self):
+        """ print market prices and others like tax """
         for i in range(self.TS/self.T):
-            print "K=%2.2f," %(self.K[i*self.T]),"L=%2.2f," %(self.L[i*self.T]),"K/L=%2.2f" %(self.k[i*self.T])
+            print "r=%2.2f," %(self.r[i*self.T]*100),"w=%2.2f," %(self.w[i*self.T]),\
+                    "Tr=%2.2f" %(self.Tr[i*self.T]), "b=%2.2f," %(self.b[i*self.T]),\
+                    "qh=%2.2f" %(self.qh[i*self.T]), "qr=%2.2f," %(self.qr[i*self.T])
+            print "K=%2.2f," %(self.K[i*self.T]),"L=%2.2f," %(self.L[i*self.T]),\
+                    "K/L=%2.2f" %(self.k[i*self.T]), "HD-HS =%2.2f" %(self.Hd[i*self.T]-self.Hs),\
+                    "RD=%2.2f" %(self.Rd[i*self.T])
 
 
     def update(self):
@@ -109,27 +128,27 @@ class state:
             self.w[t] = (1-self.alpha)*self.k[t]**self.alpha
             self.Tax[t] = self.tw[t]*self.w[t]*self.L[t] + self.tr[t]*self.r[t]*self.k[t]*self.L[t]
             self.G[t] = self.gy[t]*self.y[t]*self.L[t]
-            self.Tr[t] = (self.Tax[t] + self.Beq[t] - self.G[t])/self.Pt[t]
+            self.Tr[t] = (self.Tax[t]+self.Beq[t]-self.G[t])/self.Pt[t]
             self.tb[t] = self.zeta*(1-self.tw[t])*self.Pr[t]/(self.L[t]+self.zeta*self.Pr[t])
             self.b[t] = self.zeta*(1-self.tw[t]-self.tb[t])*self.w[t]
+            #self.qh[t] = self.qh[t]*(1+0.1*(self.Hd[t]-self.Hs))
+            #self.qr[t] = self.qr[t]*(1+0.1*self.Rd[t])
         # print "for r=%2.2f," %(self.r[0]*100), "w=%2.2f," %(self.w[0]), \
         #         "Tr=%2.2f," %(self.Tr[0]), "b=%2.2f," %(self.b[0]), "Beq.=%2.2f," %(self.Beq[0])
-        for i in range(self.TS/self.T):
-            print "r=%2.2f," %(self.r[i*self.T]*100),"w=%2.2f," %(self.w[i*self.T]),\
-                    "Tr=%2.2f" %(self.Tr[i*self.T]), "b=%2.2f," %(self.b[i*self.T])
-        self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr])
+        self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr, self.qh, self.qr])
 
 
 class cohort:
     """ This class is just a "struct" to hold the collection of primitives defining
     a generation """
-    def __init__(self, beta=0.96, sigma=2.0, gamma=0.32, aH=3.0, aL=0.0, y=-1,
-        aN=51, psi=0.001, tol=0.01, neg=-1e10, W=45, R=30, a0 = 0, tcost = 0.05):
+    def __init__(self, beta=0.95, sigma=2.0, gamma=0.32, aH=5.0, aL=0.0, y=-1,
+        aN=101, psi=0.03, tol=0.01, neg=-1e10, W=45, R=30, a0 = 0, tcost = 0.0):
         self.beta, self.sigma, self.gamma, self.psi = beta, sigma, gamma, psi
         self.R, self.W, self.y = R, W, y
         self.tcost = tcost
         self.T = T = (y+1 if (y >= 0) and (y <= W+R-2) else W+R)
-        self.aH, self.aL, self.aN, self.aa = aH, aL, aN, aL+aH*linspace(0,1,aN)**2
+        self.aH, self.aL, self.aN, self.aa = aH, aL, aN, aL+aH*linspace(0,1,aN)
+        self.a10 = aL+aH*linspace(0,1,aN*5)
         self.tol, self.neg = tol, neg
         """ house sizes and number of feasible feasible house sizes """
         self.hh = loadtxt('hh.txt', delimiter='\n')
@@ -161,81 +180,92 @@ class cohort:
         value and decision functions are calculated ***BACKWARD*** """
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
         T = self.T
+        aa, hh = self.aa, self.hh
+        psi, tcost, beta = self.psi, self.tcost, self.beta
         # y = -1 : the oldest generation
         for h in range(self.hN):
             for i in range(self.aN):
-                budget = self.aa[i]*(1+(1-tr[-1])*r[-1]) + self.hh[h]*qh[-1]*(1-self.tcost) + b[-1] + Tr[-1]
-                self.co[-1,h,i] = budget/(1+self.psi)
-                self.ro[-1,h,i] = budget*self.psi/((1+self.psi)*qh[-1])
-                self.v[-1,h,i] = self.util(self.co[-1,h,i], self.ro[-1,h,i])
-            self.vtilde[-1,h] = interp1d(self.aa, self.v[-1,h], kind='cubic')
+                budget = aa[i]*(1+(1-tr[-1])*r[-1]) + hh[h]*qh[-1]*(1-tcost) + b[-1] + Tr[-1]
+                self.co[-1,h,i] = (budget+qr[-1]*(hh[h]+10))/(1+psi)
+                self.ro[-1,h,i] = (budget*psi-qr[-1]*(hh[h]+10))/((1+psi)*qh[-1])
+                self.v[-1,h,i] = self.util(self.co[-1,h,i], self.ro[-1,h,i]+hh[h])
+            self.vtilde[-1][h] = interp1d(aa, self.v[-1,h], kind='cubic')
         # y = -2, -3,..., -60
         for y in range(-2, -(T+1), -1):
             for h in range(self.hN):
                 # print self.apath
-                m0 = 0
+                # a0 = 0
                 for i in range(self.aN):    # l = 0, 1, ..., 50
                     # Find a bracket within which optimal a' lies
-                    m = max(0, m0)  # Rch91v.g uses m = max(0, m0-1)
-                    m0, a0, b0, c0 = self.GetBracket(y, h, i, m, p)
+                    # a = max(self.aL, a0)  # Rch91v.g uses m = max(0, m0-1)
+                    a0, b0, c0 = self.GetBracket2(y, h, i, p)
+                    # print m0, a0, b0, c0
                     # Find optimal a' using Golden Section Search
+                    # print 'a=',self.aa[i],'bracket=','(',a0,',',c0,')'
                     if a0 == b0:
-                        self.ao[y,h,i] = 0
+                        self.ao[y,h,i] = self.aL
                     elif b0 == c0:
-                        self.ao[y,h,i] = self.aa[-1]
+                        self.ao[y,h,i] = self.aH
                     else:
                         # print a0, b0, c0
                         def objfn(a1): # Define objective function for optimal a'
-                            return -self.findv(y, h, self.aa[i], a1, p)
+                            return -self.findv(y, h, aa[i], a1, p)
                         result = minimize_scalar(objfn, bracket=(a0,b0,c0), method='Golden')
                         self.ao[y,h,i] = result.x
-                    # print self.a[y,i]
+
                     # Compute consumption, rent and house
 
                     v0 = self.neg
-                    for h1 in self.hh:
+                    for h1 in range(self.hN):
                         if y >= -self.R:    # y = -2, -3, ..., -60
-                            budget = self.aa[i]*(1+(1-tr[y])*r[y]) + (self.hh[h]-h1)*qh[y] \
-                                        - self.hh[h]*qh[y]*(self.hh[h]!=h1)*self.tcost \
+                            budget = aa[i]*(1+(1-tr[y])*r[y]) + (hh[h]-hh[h1])*qh[y] \
+                                        - hh[h]*qh[y]*(hh[h]!=hh[h1])*tcost \
                                         + b[y] + Tr[y] - self.ao[y,h,i]
                         else:
-                            budget = self.aa[i]*(1+(1-tr[y])*r[y]) + (self.hh[h]-h1)*qh[y] \
-                                        - self.hh[h]*qh[y]*(self.hh[h]!=h1)*self.tcost \
+                            budget = aa[i]*(1+(1-tr[y])*r[y]) + (hh[h]-hh[h1])*qh[y] \
+                                        - hh[h]*qh[y]*(hh[h]!=hh[h1])*tcost \
                                         + Tr[y] - self.ao[y,h,i] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
-                        c1 = (budget+qr[y]*h0)/(1+self.psi)
-                        r1 = (budget*self.psi-qr[y]*h0)/((1+self.psi)*qh[-1])
-                        v1 = self.util(c1, r1+self.hh[h]) + self.beta*self.vtilde[y+1,h1](self.ao[y,h,i]) \
-                                if budget > 0 else self.neg
-                        if v1 >= v0:
+                        c1 = (budget+qr[y]*(hh[h]+10))/(1+psi)
+                        r1 = (budget*psi-qr[y]*(hh[h]+10))/((1+psi)*qh[-1])
+                        if budget > 0:
+                            v1 = self.util(c1, r1+hh[h]) + beta*self.vtilde[y+1][h1](self.ao[y,h,i])
+                        else:
+                            v1 = self.neg
+                        if v1 > v0:
                             v0, self.co[y,h,i], self.ro[y,h,i], self.ho[y,h,i] = v1, c1, r1, h1
-                self.vtilde[y,h] = interp1d(self.aa, self.v[y,h], kind='cubic')
+                    if i == 60:
+                        print 'y=',y,'h=',h,'a=',self.aa[i],'an=%2.2f' %(self.ao[y,h,i]),'bracket=','(%2.2f'%(a0),',%2.2f'%(c0),')'
+                        print 'budget=%2.2f' %(budget),'c=%2.2f' %(c1),'r=%2.2f' %(r1),'h1=%2.2f' %(h1)
+                self.vtilde[y][h] = interp1d(aa, self.v[y,h], kind='cubic')
+            # if (y == -50):
+            #     break
         """ find asset and labor supply profiles over life-cycle from value function"""
         # generate each generation's asset, consumption and labor supply forward
         for y in range(T-1):    # y = 0, 1,..., 58
-            self.apath[y+1] = self.clip(interp1d(self.aa, self.ao[y,self.hpath[y]], kind='cubic')(self.apath[y]))
+            self.apath[y+1] = self.clip(interp1d(aa, self.ao[y,self.hpath[y]], kind='cubic')(self.apath[y]))
             v0 = self.neg
-            for h1 in self.hh:
+            for h1 in range(self.hN):
                 if y >= T-self.R:    # y = -2, -3, ..., -60
-                    budget = self.apath[y]*(1+(1-tr[y])*r[y]) + (self.hpath[y]-h1)*qh[y] \
-                                - self.hpath[y]*qh[y]*(self.hpath[y]!=h1)*self.tcost \
+                    budget = self.apath[y]*(1+(1-tr[y])*r[y]) + (self.hpath[y]-hh[h1])*qh[y] \
+                                - self.hpath[y]*qh[y]*(self.hpath[y]!=hh[h1])*tcost \
                                 + b[y] + Tr[y] - self.apath[y+1]
                 else:
-                    budget = self.apath[y]*(1+(1-tr[y])*r[y]) + (self.hpath[y]-h1)*qh[y] \
-                                - self.hpath[y]*qh[y]*(self.hpath[y]!=h1)*self.tcost \
+                    budget = self.apath[y]*(1+(1-tr[y])*r[y]) + (self.hpath[y]-hh[h1])*qh[y] \
+                                - self.hpath[y]*qh[y]*(self.hpath[y]!=hh[h1])*tcost \
                                 + Tr[y] - self.apath[y+1] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
-                c1 = (budget+qr[y]*self.hpath[y])/(1+self.psi)
-                r1 = (budget*self.psi-qr[y]*self.hpath[y])/((1+self.psi)*qh[-1])
-                v1 = self.util(c1, r1+self.hpath[y]) + self.beta*self.vtilde[y+1,h1](self.apath[y+1]) \
+                c1 = (budget+qr[y]*(self.hpath[y]+10))/(1+psi)
+                r1 = (budget*psi-qr[y]*(self.hpath[y]+10))/((1+psi)*qh[-1])
+                v1 = self.util(c1, r1+self.hpath[y]) + beta*self.vtilde[y+1][h1](self.apath[y+1]) \
                         if budget > 0 else self.neg
                 if v1 >= v0:
-                    v0, self.cpath[y], self.rpath[y], self.hpath[y+1], self.spath[y] = v1, c1, r1, h1, r1+self.hpath[y]
+                    v0, self.cpath[y], self.rpath[y], self.hpath[y+1], self.spath[y] = v1, c1, r1, hh[h1], r1+self.hpath[y]
             self.upath[y] = self.util(self.cpath[y], self.spath[y])
         # the oldest generation's consumption and labor supply
         budget = (1+(1-tr[T-1])*r[T-1])*self.apath[T-1] + b[T-1] + Tr[T-1] + self.hpath[T-1]*qh[T-1]*(1-self.tcost)
-        self.cpath[T-1] = (budget+qr[T-1]*self.hpath[T-1])/(1+self.psi)
-        self.rpath[T-1] = (budget*self.psi-qr[T-1]*self.hpath[T-1])/((1+self.psi)*qh[T-1])
+        self.cpath[T-1] = (budget+qr[T-1]*(self.hpath[T-1]+10))/(1+psi)
+        self.rpath[T-1] = (budget*psi-qr[T-1]*(self.hpath[T-1]+10))/((1+psi)*qh[T-1])
         self.spath[T-1] = self.rpath[T-1]
-        self.upath[T-1] = self.util(self.cpath[T-1], self.rpath[T-1])
+        self.upath[T-1] = self.util(self.cpath[T-1], self.rpath[T-1]+self.hpath[T-1])
         self.epath = self.ef[-self.T:]
 
 
@@ -259,6 +289,26 @@ class cohort:
         return m0, a, b, c
 
 
+    def GetBracket2(self, y, h, l, p):
+        """ Find a bracket (a,b,c) such that policy function for next period asset level, 
+        a[x;asset[l],y] lies in the interval (a,b) """
+        aa = self.aa
+        # da = self.aH - self.aH
+        v0 = self.neg
+        # di = 0.005
+        for i in self.a10:
+            v1 = self.findv(y, h, aa[l], i, p)
+            if v1 > v0:
+                v0 = v1
+                b = i
+        a = max(self.aL, b-0.01)
+        c = min(self.aH, b+0.01)
+
+        # if h==1 and l==30:
+        #     print a, b, c
+        return a, b, c
+
+
     def findv(self, y, h0, a0, a1, p):
         """ Return the value at the given generation and asset a0 and 
         corresponding consumption and labor supply when the agent chooses his 
@@ -266,27 +316,22 @@ class cohort:
         a1 is always within aL and aH """
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
         v0 = self.neg
+        aa, hh = self.aa, self.hh
         for h1 in range(self.hN):
             if y >= -self.R:    # y = -2, -3, ..., -60
-                budget = a0*(1+(1-tr[y])*r[y]) + (h0-h1)*qh[y] - h0*qh[y]*(h0!=h1)*self.tcost + b[y] + Tr[y] - a1
+                budget = a0*(1+(1-tr[y])*r[y]) + (hh[h0]-hh[h1])*qh[y] \
+                            - hh[h0]*qh[y]*(hh[h0]!=hh[h1])*self.tcost + b[y] + Tr[y] - a1
             else:
-                budget = a0*(1+(1-tr[y])*r[y]) + (h0-h1)*qh[y] - h0*qh[y]*(h0!=h1)*self.tcost + Tr[y] - a1 \
-                               + (1-tw[y]-tb[y])*w[y]*self.ef[y]
-            co = (budget+qr[y]*h0)/(1+self.psi)
-            ro = (budget*self.psi-qr[y]*h0)/((1+self.psi)*qh[-1])
-            v1 = self.util(co, ro) + self.beta*self.vtilde[y+1,h1](a1) if budget > 0 else self.neg
+                budget = a0*(1+(1-tr[y])*r[y]) + (hh[h0]-hh[h1])*qh[y] \
+                            - hh[h0]*qh[y]*(hh[h0]!=hh[h1])*self.tcost + Tr[y] - a1 \
+                            + (1-tw[y]-tb[y])*w[y]*self.ef[y]
+            co = (budget+qr[y]*(hh[h0]+10))/(1+self.psi)
+            ro = (budget*self.psi-qr[y]*(hh[h0]+10))/((1+self.psi)*qh[-1])
+            v1 = self.util(co, ro+hh[h0]) + self.beta*self.vtilde[y+1][h1](a1) if budget > 0 else self.neg
             v0 = max(v0,v1)
+            # if y == -2 and :
+            #     print h0, a0, 'a1,h1=',a1, h1, 'v1=',v1
         return v0
-
-
-    def findcl(self, y, a0, a1, p):
-        """ Given economy E.prices and next two periods' asset levels
-        a generation optimizes on consumption and labor supply at year y """
-        [r, w, b, tr, tw, tb, Tr, qh, qr] = p
-        def foc((c,l)):
-            return (1+(1-tr[y])*r[y])*a0 + (1-tw[y]-tb[y])*w[y]*self.ef[y]*l + Tr[y] - a1 - c,\
-                (1-tw[y]-tb[y])*w[y]*self.ef[y]*self.uc(c,l) + self.ul(c,l)
-        return fsolve(foc,(0.3,0.3))
 
 
     def clip(self, a):
@@ -295,7 +340,7 @@ class cohort:
 
     def util(self, c, s):
         # calculate utility value with given consumption and housing service
-        return log(c) + self.psi*log(s)
+        return log(c) + self.psi*log(s+10) if (c>0 and s>0) else self.neg
         # (((c+self.psi)**self.gamma*(1-l)**(1-self.gamma))**(1-self.sigma))/(1-self.sigma)
 
 
@@ -336,7 +381,6 @@ def transition_sub1(g,T,TS,Et,a1,e1):
         g.apath, g.epath = a1, e1
 
 
-
 def transition(N=15,beta=0.96):
     with open('E.pickle','rb') as f:
         [E0, E1, Et, it] = pickle.load(f)
@@ -362,14 +406,14 @@ def transition(N=15,beta=0.96):
                     p.join()
                 print 'transition('+str(n)+') is progressing : {}'.format(datetime.now())
                 jobs=[]
-#            start_time_gs = datetime.now()
-#            if (g.y >= T-1) and (g.y <= TS-(T+1)):
-#                g.findvpath(Et.p[:,g.y-T+1:g.y+1])
-#            elif (g.y < T-1):
-#                g.findvpath(Et.p[:,:g.y+1])
-#            else:
-#                g.apath, g.epath = a1, e1
-#            print('transition gs loop: {}'.format(datetime.now() - start_time_gs))
+        #            start_time_gs = datetime.now()
+        #            if (g.y >= T-1) and (g.y <= TS-(T+1)):
+        #                g.findvpath(Et.p[:,g.y-T+1:g.y+1])
+        #            elif (g.y < T-1):
+        #                g.findvpath(Et.p[:,:g.y+1])
+        #            else:
+        #                g.apath, g.epath = a1, e1
+        #            print('transition gs loop: {}'.format(datetime.now() - start_time_gs))
         if len(jobs) > 0:
             for p in jobs:
                 p.join()
@@ -471,7 +515,18 @@ def tpath():
     # time.sleep(1)
     # plt.close() # plt.close("all")
     
-    
+
 if __name__ == '__main__':
-    findinitial()
-    transition()
+    print 'starting...'
+    e = state(TG=1,ng=1,dng=0, W=45, R=30,qh=10,qr=0.03)
+    e.printprices()
+    g = cohort(W=45, R=30,psi=1,tcost=0.3)
+    g.findvpath(e.p)
+    e.aggregate([g])
+    e.update()
+    e.printprices()
+
+
+
+
+    
