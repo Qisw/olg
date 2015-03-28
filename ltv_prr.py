@@ -141,7 +141,7 @@ class state:
 class cohort:
     """ This class is just a "struct" to hold the collection of primitives defining
     a generation """
-    def __init__(self, beta=0.95, sigma=2.0, gamma=0.32, aH=5.0, aL=0.0, y=-1,
+    def __init__(self, beta=0.99, sigma=2.0, gamma=1, aH=5.0, aL=0.0, y=-1,
         aN=101, psi=0.03, tol=0.01, neg=-1e5, W=45, R=30, a0 = 0, tcost = 0.0):
         self.beta, self.sigma, self.gamma, self.psi = beta, sigma, gamma, psi
         self.R, self.W, self.y = R, W, y
@@ -179,15 +179,14 @@ class cohort:
         """ Given prices, transfers, benefits and tax rates over one's life-cycle, 
         value and decision functions are calculated ***BACKWARD*** """
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
-        T = self.T
-        aa, hh = self.aa, self.hh
-        psi, tcost, beta = self.psi, self.tcost, self.beta
+        T, aa, hh = self.T, self.aa, self.hh
+        psi, tcost, beta, gamma = self.psi, self.tcost, self.beta, self.gamma
         # y = -1 : the oldest generation
         for h in range(self.hN):
             for i in range(self.aN):
                 budget = aa[i]*(1+(1-tr[-1])*r[-1]) + hh[h]*qh[-1]*(1-tcost) + b[-1] + Tr[-1]
-                self.co[-1,h,i] = (budget+qr[-1]*(hh[h]+10))/(1+psi)
-                self.ro[-1,h,i] = (budget*psi-qr[-1]*(hh[h]+10))/((1+psi)*qh[-1])
+                self.co[-1,h,i] = (budget+qr[-1]*(hh[h]+gamma))/(1+psi)
+                self.ro[-1,h,i] = (budget*psi-qr[-1]*(hh[h]+gamma))/((1+psi)*qh[-1])
                 self.v[-1,h,i] = self.util(self.co[-1,h,i], self.ro[-1,h,i]+hh[h])
             self.vtilde[-1][h] = interp1d(aa, self.v[-1,h], kind='cubic')
         # y = -2, -3,..., -60
@@ -215,7 +214,7 @@ class cohort:
 
                     # Compute consumption, rent and house
 
-                    v0 = self.neg
+                    self.v[y,h,i] = self.neg
                     for h1 in range(self.hN):
                         if y >= -self.R:    # y = -2, -3, ..., -60
                             budget = aa[i]*(1+(1-tr[y])*r[y]) + (hh[h]-hh[h1])*qh[y] \
@@ -225,19 +224,23 @@ class cohort:
                             budget = aa[i]*(1+(1-tr[y])*r[y]) + (hh[h]-hh[h1])*qh[y] \
                                         - hh[h]*qh[y]*(hh[h]!=hh[h1])*tcost \
                                         + Tr[y] - self.ao[y,h,i] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
-                        c1 = (budget+qr[y]*(hh[h]+10))/(1+psi)
-                        r1 = (budget*psi-qr[y]*(hh[h]+10))/((1+psi)*qh[-1])
+                        c1 = (budget+qr[y]*(hh[h]+gamma))/(1+psi)
+                        r1 = (budget*psi-qr[y]*(hh[h]+gamma))/((1+psi)*qh[-1])
                         if budget > 0:
                             v1 = self.util(c1, r1+hh[h]) + beta*self.vtilde[y+1][h1](self.ao[y,h,i])
                         else:
                             v1 = self.neg + budget
-                        if v1 > v0:
-                            v0, self.co[y,h,i], self.ro[y,h,i], self.ho[y,h,i] = v1, c1, r1, h1
-                    if i == 60:
+                        if v1 > self.v[y,h,i]:
+                            self.v[y,h,i], self.co[y,h,i], self.ro[y,h,i], self.ho[y,h,i] = v1, c1, r1, h1
+                    if i == 30 or i == 60 or i == 90 or i == 150:
                         print '\n'
-                        print 'y=',y,'    h=',h,'a=',self.aa[i] #'bracket=','(%2.2f'%(a0),',%2.2f'%(c0),')'
-                        print '------','h1=%2.2f' %(h1), 'an=%2.2f' %(self.ao[y,h,i])
-                        print '------','budget=%2.2f' %(budget),'c=%2.2f' %(c1),'r=%2.2f' %(r1)
+                        print 'y=',y,'    h=',h,'a=',self.aa[i],'v=%2.2f' %(self.v[y,h,i]) #'bracket=','(%2.2f'%(a0),',%2.2f'%(c0),')'
+                        print '---------','h1=%2.0f' %(self.ho[y,h,i]), 'an=%2.2f' %(self.ao[y,h,i]),\
+                              'budget=%2.2f' %(budget),'c=%2.2f' %(c1),'r=%2.2f' %(r1)
+                        # print '------','v1(0,a1)=%2.2f' %(beta*self.vtilde[y+1][0](self.ao[y,h,i])),\
+                        #       'v1(1,a1)=%2.2f' %(beta*self.vtilde[y+1][1](self.ao[y,h,i])),\
+                        #       'v1(2,a1)=%2.2f' %(beta*self.vtilde[y+1][2](self.ao[y,h,i]))
+
                 self.vtilde[y][h] = interp1d(aa, self.v[y,h], kind='cubic')
             # if (y == -50):
             #     break
@@ -255,8 +258,8 @@ class cohort:
                     budget = self.apath[y]*(1+(1-tr[y])*r[y]) + (self.hpath[y]-hh[h1])*qh[y] \
                                 - self.hpath[y]*qh[y]*(self.hpath[y]!=hh[h1])*tcost \
                                 + Tr[y] - self.apath[y+1] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
-                c1 = (budget+qr[y]*(self.hpath[y]+10))/(1+psi)
-                r1 = (budget*psi-qr[y]*(self.hpath[y]+10))/((1+psi)*qh[-1])
+                c1 = (budget+qr[y]*(self.hpath[y]+gamma))/(1+psi)
+                r1 = (budget*psi-qr[y]*(self.hpath[y]+gamma))/((1+psi)*qh[-1])
                 v1 = self.util(c1, r1+self.hpath[y]) + beta*self.vtilde[y+1][h1](self.apath[y+1]) \
                         if budget > 0 else self.neg + budget
                 if v1 >= v0:
@@ -264,8 +267,8 @@ class cohort:
             self.upath[y] = self.util(self.cpath[y], self.spath[y])
         # the oldest generation's consumption and labor supply
         budget = (1+(1-tr[T-1])*r[T-1])*self.apath[T-1] + b[T-1] + Tr[T-1] + self.hpath[T-1]*qh[T-1]*(1-self.tcost)
-        self.cpath[T-1] = (budget+qr[T-1]*(self.hpath[T-1]+10))/(1+psi)
-        self.rpath[T-1] = (budget*psi-qr[T-1]*(self.hpath[T-1]+10))/((1+psi)*qh[T-1])
+        self.cpath[T-1] = (budget+qr[T-1]*(self.hpath[T-1]+gamma))/(1+psi)
+        self.rpath[T-1] = (budget*psi-qr[T-1]*(self.hpath[T-1]+gamma))/((1+psi)*qh[T-1])
         self.spath[T-1] = self.rpath[T-1]
         self.upath[T-1] = self.util(self.cpath[T-1], self.rpath[T-1]+self.hpath[T-1])
         self.epath = self.ef[-self.T:]
@@ -336,6 +339,23 @@ class cohort:
             #     print h0, a0, 'a1,h1=',a1, h1, 'v1=',v1
         return v0
 
+    # def budget(self,y,h0,h1,a0,a1,p):
+    #     """ budget for consumption and rent given next period house and asset """
+    #     [r, w, b, tr, tw, tb, Tr, qh, qr] = p
+    #     T = self.T
+    #     aa, hh = self.aa, self.hh
+    #     psi, tcost, beta = self.psi, self.tcost, self.beta
+
+    #     if y >= -self.R:    # y = -2, -3, ..., -60
+    #         b = a0*(1+(1-tr[y])*r[y]) + (h0-h1)*qh[y] \
+    #                 - hh[h]*qh[y]*(hh[h]!=hh[h1])*tcost \
+    #                 + b[y] + Tr[y] - self.ao[y,h,i]
+    #     else:
+    #         b = aa[i]*(1+(1-tr[y])*r[y]) + (hh[h]-hh[h1])*qh[y] \
+    #                 - hh[h]*qh[y]*(hh[h]!=hh[h1])*tcost \
+    #                 + Tr[y] - self.ao[y,h,i] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
+    #     return b
+
 
     def clip(self, a):
         return self.aL if a <= self.aL else self.aH if a >= self.aH else a
@@ -343,7 +363,7 @@ class cohort:
 
     def util(self, c, s):
         # calculate utility value with given consumption and housing service
-        return log(c) + self.psi*log(s+10) if (c>0 and s>0) else self.neg
+        return log(c) + self.psi*log(s+self.gamma) if (c>0 and s>0) else self.neg
         # (((c+self.psi)**self.gamma*(1-l)**(1-self.gamma))**(1-self.sigma))/(1-self.sigma)
 
 
@@ -521,9 +541,9 @@ def tpath():
 
 if __name__ == '__main__':
     print 'starting...'
-    e = state(TG=1,ng=1,dng=0, W=45, R=30,qh=10,qr=0.03)
+    e = state(TG=1,ng=1,dng=0, W=45, R=30,qh=1.5,qr=0.03)
     e.printprices()
-    g = cohort(W=45, R=30,psi=1,tcost=0.3)
+    g = cohort(W=45, R=30,psi=2,beta=0.96, tcost=0.1, gamma=3, aH=8.0, aN=201)
     g.findvpath(e.p)
     e.aggregate([g])
     e.update()
