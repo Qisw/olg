@@ -148,7 +148,7 @@ class cohort:
         self.tcost = tcost
         self.T = T = (y+1 if (y >= 0) and (y <= W+R-2) else W+R)
         self.aH, self.aL, self.aN, self.aa = aH, aL, aN, aL+aH*linspace(0,1,aN)
-        self.a10 = aL+aH*linspace(0,1,aN)
+        self.a10 = aL+aH*linspace(0,1,aN*3)
         self.tol, self.neg = tol, neg
         """ house sizes and number of feasible feasible house sizes """
         self.hh = [0, 2, 4]
@@ -181,70 +181,71 @@ class cohort:
         """ Given prices, transfers, benefits and tax rates over one's life-cycle, 
         value and decision functions are calculated ***BACKWARD*** """
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
-        T, aa, hh = self.T, self.aa, self.hh
+        T, aa, hh, aN, hN = self.T, self.aa, self.hh, self.aN, self.hN
         psi, tcost, beta, gamma = self.psi, self.tcost, self.beta, self.gamma
         # y = -1 : the oldest generation
         for h in range(self.hN):
             for i in range(self.aN):
                 budget = aa[i]*(1+(1-tr[-1])*r[-1]) + hh[h]*qh[-1]*(1-tcost) + b[-1] + Tr[-1]
                 self.co[-1,h,i] = (budget+qr[-1]*(hh[h]+gamma))/(1+psi)
-                self.ro[-1,h,i] = (budget*psi-qr[-1]*(hh[h]+gamma))/((1+psi)*qh[-1])
+                self.ro[-1,h,i] = (budget*psi-qr[-1]*(hh[h]+gamma))/((1+psi)*qr[-1])
                 self.v[-1,h,i] = self.util(self.co[-1,h,i], self.ro[-1,h,i]+hh[h])
             self.vtilde[-1][h] = interp1d(aa, self.v[-1,h], kind='cubic')
         # y = -2, -3,..., -60
         for y in range(-2, -(T+1), -1):
-            for h in range(self.hN):
+            for h0 in range(self.hN):
+                at = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
+                ct = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
+                rt = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
+                vt = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
+                casht = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
                 # print self.apath
-                m0 = 0
-                for i in range(self.aN):    # l = 0, 1, ..., 50
-                    # Find a bracket within which optimal a' lies
-                    m = max(0, m0)  # Rch91v.g uses m = max(0, m0-1)
-                    # m0, a0, b0, c0 = self.GetBracket(y, h, i, m, p)
-                    a0, b0, c0 = self.GetBracket2(y, h, i, p)
-                    # print m0, a0, b0, c0
-                    # Find optimal a' using Golden Section Search
-                    # print 'a=',self.aa[i],'bracket=','(',a0,',',c0,')'
-                    if a0 == b0:
-                        self.ao[y,h,i] = self.aL
-                    elif b0 == c0:
-                        self.ao[y,h,i] = self.aH
-                    else:
-                        # print a0, b0, c0
-                        def objfn(a1): # Define objective function for optimal a'
-                            return -self.findv(y, h, aa[i], a1, p)
-                        result = minimize_scalar(objfn, bracket=(a0,b0,c0), method='Golden')
-                        self.ao[y,h,i] = result.x
-
-                    # Compute consumption, rent and house
-                    budget0 = 0
-                    self.v[y,h,i] = self.neg
-                    for h1 in range(self.hN):
-                        if y >= -self.R:    # y = -2, -3, ..., -60
-                            budget = aa[i]*(1+(1-tr[y])*r[y]) + (hh[h]-hh[h1])*qh[y] \
-                                        - hh[h]*qh[y]*(hh[h]!=hh[h1])*tcost \
-                                        + b[y] + Tr[y] - self.ao[y,h,i]
+                for h1 in range(self.hN):
+                    m0 = 0
+                    for i in range(self.aN):    # l = 0, 1, ..., 50
+                        # Find a bracket within which optimal a' lies
+                        m = max(0, m0)  # Rch91v.g uses m = max(0, m0-1)
+                        m0, a0, b0, c0 = self.GetBracket(y, h0, h1, i, m, p)
+                        # a0, b0, c0 = self.GetBracket2(y, h0, h1, i, p)
+                        # print m0, a0, b0, c0
+                        # Find optimal a' using Golden Section Search
+                        # print 'a=',self.aa[i],'bracket=','(',a0,',',c0,')'
+                        if a0 == b0:
+                            at[h1,i] = self.aL
+                        elif b0 == c0:
+                            at[h1,i] = self.aH
                         else:
-                            budget = aa[i]*(1+(1-tr[y])*r[y]) + (hh[h]-hh[h1])*qh[y] \
-                                        - hh[h]*qh[y]*(hh[h]!=hh[h1])*tcost \
-                                        + Tr[y] - self.ao[y,h,i] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
-                        c1 = (budget+qr[y]*(hh[h]+gamma))/(1+psi)
-                        r1 = (budget*psi-qr[y]*(hh[h]+gamma))/((1+psi)*qh[-1])
-                        if c1 <= 0:
-                            pass
-                        else:
-                            v1 = self.util(c1, r1+hh[h]) + beta*self.vtilde[y+1][h1](self.ao[y,h,i])
-                            if v1 > self.v[y,h,i]:
-                                self.v[y,h,i], self.co[y,h,i], self.ro[y,h,i], self.ho[y,h,i], budget0 = v1, c1, r1, h1, budget
-                    if i == 30 or i == 60 or i == 90 or i == 150:
-                        print '\n'
-                        print 'y=',y,'    h=',h,'a=',self.aa[i],'v=%2.2f' %(self.v[y,h,i]) #'bracket=','(%2.2f'%(a0),',%2.2f'%(c0),')'
-                        print '---------','h1=%2.0f' %(self.ho[y,h,i]), 'an=%2.2f' %(self.ao[y,h,i]),\
-                              'budget=%2.2f' %(budget0),'c=%2.2f' %(self.co[y,h,i]),'r=%2.2f' %(self.ro[y,h,i])
-                        # print '------','v1(0,a1)=%2.2f' %(beta*self.vtilde[y+1][0](self.ao[y,h,i])),\
-                        #       'v1(1,a1)=%2.2f' %(beta*self.vtilde[y+1][1](self.ao[y,h,i])),\
-                        #       'v1(2,a1)=%2.2f' %(beta*self.vtilde[y+1][2](self.ao[y,h,i]))
+                            # print a0, b0, c0
+                            def objfn(a1): # Define objective function for optimal a'
+                                return -self.findv(y, h0, h1, aa[i], a1, p)
+                            result = minimize_scalar(objfn, bracket=(a0,b0,c0), method='Golden')
+                            at[h1,i] = result.x
 
-                self.vtilde[y][h] = interp1d(aa, self.v[y,h], kind='cubic')
+                        # Compute consumption, rent and house
+                        casht[h1,i] = self.budget(y,h0,h1,aa[i],at[h1,i],p)
+                        ct[h1,i] = (casht[h1,i]+qr[y]*(hh[h0]+gamma))/(1+psi)
+                        rt[h1,i] = (casht[h1,i]*psi-qr[y]*(hh[h0]+gamma))/((1+psi)*qr[y])
+                        vt[h1,i] = self.util(ct[h1,i],rt[h1,i]+hh[h0]) + beta*self.vtilde[y+1][h1](at[h1,i])
+
+                for i in range(self.aN):
+                    h1 = vt[:,i].argmax()
+                    self.v[y,h0,i] = vt[h1,i]
+                    self.co[y,h0,i] = ct[h1,i]
+                    self.ro[y,h0,i] = rt[h1,i]
+                    self.ho[y,h0,i] = h1
+                    self.ao[y,h0,i] = at[h1,i]
+                    cash = casht[h1,i]
+
+                if i == 30 or i == 60 or i == 90 or i == 150:
+                    print '\n'
+                    print 'y=',y,'    h=',h0,'a=',self.aa[i],'v=%2.2f' %(self.v[y,h0,i]) #'bracket=','(%2.2f'%(a0),',%2.2f'%(c0),')'
+                    print '---------','h1=%2.0f' %(self.ho[y,h0,i]), 'an=%2.2f' %(self.ao[y,h0,i]),\
+                          'budget=%2.2f' %(cash),'c=%2.2f' %(self.co[y,h0,i]),'r=%2.2f' %(self.ro[y,h0,i])
+                    # print '------','v1(0,a1)=%2.2f' %(beta*self.vtilde[y+1][0](self.ao[y,h,i])),\
+                    #       'v1(1,a1)=%2.2f' %(beta*self.vtilde[y+1][1](self.ao[y,h,i])),\
+                    #       'v1(2,a1)=%2.2f' %(beta*self.vtilde[y+1][2](self.ao[y,h,i]))
+
+                self.vtilde[y][h0] = interp1d(aa, self.v[y,h0], kind='cubic')
             # if (y == -50):
             #     break
         """ find asset and labor supply profiles over life-cycle from value function"""
@@ -262,7 +263,7 @@ class cohort:
                                 - self.hpath[y]*qh[y]*(self.hpath[y]!=hh[h1])*tcost \
                                 + Tr[y] - self.apath[y+1] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
                 c1 = (budget+qr[y]*(self.hpath[y]+gamma))/(1+psi)
-                r1 = (budget*psi-qr[y]*(self.hpath[y]+gamma))/((1+psi)*qh[-1])
+                r1 = (budget*psi-qr[y]*(self.hpath[y]+gamma))/((1+psi)*qr[y])
                 if c1 <= 0:
                     pass
                 else:
@@ -279,7 +280,7 @@ class cohort:
         self.epath = self.ef[-self.T:]
 
 
-    def GetBracket(self, y, h, l, m, p):
+    def GetBracket(self, y, h0, h1, l, m, p):
         """ Find a bracket (a,b,c) such that policy function for next period asset level, 
         a[x;asset[l],y] lies in the interval (a,b) """
         aa = self.aa
@@ -287,7 +288,7 @@ class cohort:
         m0 = m
         v0 = self.neg
         while (a > b) or (b > c):
-            v1 = self.findv(y, h, aa[l], aa[m], p)
+            v1 = self.findv(y, h0, h1, aa[l], aa[m], p)
             if v1 > v0:
                 a, b, = ([aa[m], aa[m]] if m == 0 else [aa[m-1], aa[m]])
                 v0, m0 = v1, m
@@ -299,75 +300,32 @@ class cohort:
         return m0, a, b, c
 
 
-    def GetBracket2(self, y, h, l, p):
-        """ Find a bracket (a,b,c) such that policy function for next period asset level, 
-        a[x;asset[l],y] lies in the interval (a,b) """
-        aa = self.aa
-        # da = self.aH - self.aH
-        v0 = self.neg
-        b = self.aL
-        # di = 0.005
-        for i in self.a10:
-            v1 = self.findv(y, h, aa[l], i, p)
-            if v1 > v0:
-                v0 = v1
-                b = i
-        a = max(self.aL, b-0.01)
-        c = min(self.aH, b+0.01)
-
-        # if h==1 and l==30:
-        #     print a, b, c
-        return a, b, c
-
-
-    def findv(self, y, h0, a0, a1, p):
+    def findv(self, y, h0, h1, a0, a1, p):
         """ Return the value at the given generation and asset a0 and 
         corresponding consumption and labor supply when the agent chooses his 
         next period asset a1, current period consumption c and labor n
         a1 is always within aL and aH """
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
-        v0 = self.neg
         aa, hh = self.aa, self.hh
-        for h1 in range(self.hN):
-            if y >= -self.R:    # y = -2, -3, ..., -60
-                budget = a0*(1+(1-tr[y])*r[y]) + (hh[h0]-hh[h1])*qh[y] \
-                            - hh[h0]*qh[y]*(hh[h0]!=hh[h1])*self.tcost + b[y] + Tr[y] - a1
-            else:
-                budget = a0*(1+(1-tr[y])*r[y]) + (hh[h0]-hh[h1])*qh[y] \
-                            - hh[h0]*qh[y]*(hh[h0]!=hh[h1])*self.tcost + Tr[y] - a1 \
-                            + (1-tw[y]-tb[y])*w[y]*self.ef[y]
-            co = (budget+qr[y]*(hh[h0]+10))/(1+self.psi)
-            ro = (budget*self.psi-qr[y]*(hh[h0]+10))/((1+self.psi)*qh[-1])
-            if co <= 0:
-                pass
-            else:
-                v1 = self.util(co, ro+hh[h0]) + self.beta*self.vtilde[y+1][h1](a1)
-                v0 = max(v0,v1)
-            # if budget <= 0:
-            #     pass
-            # else:
-            #     v1 = self.util(co, ro+hh[h0]) + self.beta*self.vtilde[y+1][h1](a1)
-            #     v0 = max(v0,v1)
-            # if y == -2 and :
-            #     print h0, a0, 'a1,h1=',a1, h1, 'v1=',v1
-        return v0
+        cash = self.budget(y,h0,h1,a0,a1,p)
+        co = (cash+qr[y]*(hh[h0]+self.gamma))/(1+self.psi)
+        ro = (cash*self.psi-qr[y]*(hh[h0]+self.gamma))/((1+self.psi)*qr[y])
+        # print h1, a1
+        v = self.util(co, ro+hh[h0]) + self.beta*self.vtilde[y+1][h1](a1)
+        return v if co > 0 else self.neg
 
-    # def budget(self,y,h0,h1,a0,a1,p):
-    #     """ budget for consumption and rent given next period house and asset """
-    #     [r, w, b, tr, tw, tb, Tr, qh, qr] = p
-    #     T = self.T
-    #     aa, hh = self.aa, self.hh
-    #     psi, tcost, beta = self.psi, self.tcost, self.beta
 
-    #     if y >= -self.R:    # y = -2, -3, ..., -60
-    #         b = a0*(1+(1-tr[y])*r[y]) + (h0-h1)*qh[y] \
-    #                 - hh[h]*qh[y]*(hh[h]!=hh[h1])*tcost \
-    #                 + b[y] + Tr[y] - self.ao[y,h,i]
-    #     else:
-    #         b = aa[i]*(1+(1-tr[y])*r[y]) + (hh[h]-hh[h1])*qh[y] \
-    #                 - hh[h]*qh[y]*(hh[h]!=hh[h1])*tcost \
-    #                 + Tr[y] - self.ao[y,h,i] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
-    #     return b
+    def budget(self,y,h0,h1,a0,a1,p):
+        """ budget for consumption and rent given next period house and asset """
+        [r, w, b, tr, tw, tb, Tr, qh, qr] = p
+        hh = self.hh
+        if y >= -self.R:    # y = -2, -3, ..., -60
+            # print y, h0, h1, tr[y], r[y], hh[h0], hh[h1], qh[y], b[y], Tr[y]
+            b = a0*(1+(1-tr[y])*r[y]) + (hh[h0]-hh[h1])*qh[y] - hh[h0]*qh[y]*(h0!=h1)*self.tcost + b[y] + Tr[y] - a1
+        else:
+            b = a0*(1+(1-tr[y])*r[y]) + (hh[h0]-hh[h1])*qh[y] - hh[h0]*qh[y]*(h0!=h1)*self.tcost \
+                    + Tr[y] + (1-tw[y]-tb[y])*w[y]*self.ef[y] - a1
+        return b
 
 
     def clip(self, a):
@@ -556,7 +514,7 @@ if __name__ == '__main__':
     print 'starting...'
     e = state(TG=1,ng=1,dng=0, W=45, R=30,qh=1.5,qr=0.13)
     e.printprices()
-    g = cohort(W=45, R=30,psi=10,beta=0.96, tcost=0.05, gamma=1, aH=5.0, aN=501)
+    g = cohort(W=45, R=30,psi=10,beta=0.96, tcost=0.05, gamma=1, aH=5.0, aN=251)
     g.findvpath(e.p)
     e.aggregate([g])
     e.update()
