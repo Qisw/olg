@@ -9,7 +9,7 @@ HOUSEHOLD'S UTILITY FUNCTION IS DIFFERENT FROM THAT OF SECTION 9.1. AND 9.2.
 
 from scipy.interpolate import interp1d
 from scipy.optimize import fsolve, minimize_scalar
-from numpy import linspace, mean, array, zeros, absolute, loadtxt, dot, prod, log, arange, set_printoptions
+from numpy import linspace, mean, array, zeros, absolute, loadtxt, dot, prod, log, arange, set_printoptions, isnan
 from matplotlib import pyplot as plt
 from datetime import datetime
 import time
@@ -142,7 +142,7 @@ class cohort:
     """ This class is just a "struct" to hold the collection of primitives defining
     a generation """
     def __init__(self, beta=0.99, sigma=2.0, gamma=1, aH=5.0, aL=0.0, y=-1,
-        aN=101, psi=0.03, tol=0.01, neg=-1e5, W=45, R=30, a0 = 0, tcost = 0.0, ltv=0.7):
+        aN=101, psi=0.03, tol=0.01, neg=-1e10, W=45, R=30, a0 = 0, tcost = 0.0, ltv=0.7):
         self.beta, self.sigma, self.gamma, self.psi = beta, sigma, gamma, psi
         self.R, self.W, self.y = R, W, y
         self.tcost, self.ltv = tcost, ltv
@@ -150,7 +150,7 @@ class cohort:
         self.aH, self.aL, self.aN, self.aa = aH, aL, aN, aL+(aH-aL)*linspace(0,1,aN)
         self.tol, self.neg = tol, neg
         """ house sizes and number of feasible feasible house sizes """
-        self.hh = [0, 0.2, 0.5]
+        self.hh = [0.0, 0.2, 0.5, 1.0]
         # self.hh = loadtxt('hh.txt', delimiter='\n')
         self.hN = len(self.hh)
         """ age-specific productivity """
@@ -189,10 +189,15 @@ class cohort:
                 self.co[-1,h,i] = (budget+qr[-1]*(hh[h]+gamma))/(1+psi)
                 self.ro[-1,h,i] = (budget*psi-qr[-1]*(hh[h]+gamma))/((1+psi)*qr[-1])
                 self.v[-1,h,i] = self.util(self.co[-1,h,i], self.ro[-1,h,i]+hh[h])
+                # print 'h=',h,'a=',aa[i],'budget=%2.2f'%(budget), 'c=%2.2f'%(self.co[-1,h,i]), \
+                # 'r=%2.2f'%(self.ro[-1,h,i]),'v=%2.2f'%(self.v[-1,h,i])
             self.vtilde[-1][h] = interp1d(aa, self.v[-1,h], kind='cubic')
+
         # y = -2, -3,..., -60
         for y in range(-2, -(T+1), -1):
             income = Tr[y] + b[y] if y >= -self.R else Tr[y] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
+            mdti = (aa + income*0.3 >= 0).argmax() # DTI constraint
+            # print 'dit',income*0.3,mdti,aa[mdti]
             for h0 in range(self.hN):
                 at = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
                 ct = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
@@ -201,16 +206,19 @@ class cohort:
                 casht = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
                 # print self.apath
                 for h1 in range(self.hN):
-                    m0 = (aa + self.ltv*qh[y]*hh[h1] >= 0).argmax() # LTV constraint
+                    mltv = (aa + self.ltv*qh[y]*hh[h1] >= 0).argmax() # LTV constraint
                     # print (aa + self.ltv*qh[y]*hh[h1] > 0)
                     # print m0
-                    # m0 = 0
+                    # mc = max(mltv,mdti)
+                    # m0 = max(0,mc)
+                    m0 = 0
                     for i in range(self.aN):    # l = 0, 1, ..., 50
                         # Find a bracket within which optimal a' lies
                         m = max(0, m0)  # Rch91v.g uses m = max(0, m0-1)
+                        # print m
                         m0, a0, b0, c0 = self.GetBracket(y, h0, h1, i, m, p)
                         # a0, b0, c0 = self.GetBracket2(y, h0, h1, i, p)
-                        # print m0, a0, b0, c0
+                        # print y, h0, h1, i, m0, a0, b0, c0
                         # Find optimal a' using Golden Section Search
                         # print 'a=',self.aa[i],'bracket=','(',a0,',',c0,')'
                         if a0 == b0:
@@ -243,7 +251,7 @@ class cohort:
                     print '------------'
                     print 'y=',y,'income=%2.2f'%(income),'h0=',h0
                     for i in ai:
-                        print 'a0=%2.2f'%(aa[i]),'h1=%2.2f'%(self.ho[y,h0,i]),'a1=%2.2f'%(self.ao[y,h0,i]),\
+                        print 'a0=%2.2f'%(aa[i]),'h1=%2.0f'%(self.ho[y,h0,i]),'a1=%2.2f'%(self.ao[y,h0,i]),\
                                 'c0=%2.2f'%(self.co[y,h0,i]),'r0=%2.2f'%(self.ro[y,h0,i])
                               # 'budget=%2.2f' %(cash),'c=%2.2f' %(self.co[y,h0,i]),'r=%2.2f' %(self.ro[y,h0,i])
                         # print '------','v1(0,a1)=%2.2f' %(beta*self.vtilde[y+1][0](self.ao[y,h,i])),\
@@ -289,12 +297,16 @@ class cohort:
         """ Find a bracket (a,b,c) such that policy function for next period asset level, 
         a[x;asset[l],y] lies in the interval (a,b) """
         aa = self.aa
-        a, b, c = aa[0], aa[0]-aa[1], aa[0]-aa[2]
+        # print aa
+        a, b, c = aa[0], 2*aa[0]-aa[1], 2*aa[0]-aa[2]
+        # print 'abc=',a,b,c
         m0 = m
-        v0 = self.neg
+        v0 = float('-inf')
         while (a > b) or (b > c):
             v1 = self.findv(y, h0, h1, aa[l], aa[m], p)
-            if v1 > v0:
+            # print y,l,m,'v0=%2.2f'%(v0),'v1=%2.2f'%(v1),a,b,c
+            # print v1
+            if v1 >= v0:
                 a, b, = ([aa[m], aa[m]] if m == 0 else [aa[m-1], aa[m]])
                 v0, m0 = v1, m
             else:
@@ -312,12 +324,14 @@ class cohort:
         a1 is always within aL and aH """
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
         aa, hh = self.aa, self.hh
-        cash = self.budget(y,h0,h1,a0,a1,p)
-        co = (cash+qr[y]*(hh[h0]+self.gamma))/(1+self.psi)
-        ro = (cash*self.psi-qr[y]*(hh[h0]+self.gamma))/((1+self.psi)*qr[y])
-        # print h1, a1
-        v = self.util(co, ro+hh[h0]) + self.beta*self.vtilde[y+1][h1](a1)
-        return v if co > 0 else self.neg
+        cash = self.budget(y, h0, h1, a0, a1, p)
+        if cash + qr[y]*(hh[h0]+self.gamma) > 0:
+            co = (cash+qr[y]*(hh[h0]+self.gamma))/(1+self.psi)
+            ro = (cash*self.psi-qr[y]*(hh[h0]+self.gamma))/((1+self.psi)*qr[y])
+            v = self.util(co, ro+hh[h0]) + self.beta*self.vtilde[y+1][h1](a1)
+        else:
+            v = self.neg #float('-inf')
+        return v
 
 
     def budget(self,y,h0,h1,a0,a1,p):
@@ -339,117 +353,11 @@ class cohort:
 
     def util(self, c, s):
         # calculate utility value with given consumption and housing service
-        return log(c) + self.psi*log(s+self.gamma) if (c>0 and s>0) else self.neg
+        # print 'c=',c,'s',s
+        return log(c) + self.psi*log(s+self.gamma) if c > 0 else self.neg #float('-inf')
         # (((c+self.psi)**self.gamma*(1-l)**(1-self.gamma))**(1-self.sigma))/(1-self.sigma)
 
 
-
-"""The following are procedures to get steady state of the economy using direct 
-age-profile iteration and projection method"""
-
-
-def findinitial(ng0=1.01, ng1=1.00, W=45, R=30, TG=4, alpha=0.3, beta=0.96, delta=0.08):
-    start_time = datetime.now()
-    """Find Old and New Steady States with population growth rates ng and ng1"""
-    E0, g0 = value(state(TG=1,W=W,R=R,ng=ng0,alpha=alpha,delta=delta),
-                    cohort(beta=beta,W=W,R=R))
-    E1, g1 = value(state(TG=1,W=W,R=R,ng=ng1,alpha=alpha,delta=delta),
-                    cohort(beta=beta,W=W,R=R))
-    T = W + R
-    TS = T*TG
-    """Initialize Transition Path for t = 0,...,TS-1"""
-    Et= state(TG=TG,W=W,R=R,ng=ng0,dng=(ng1-ng0),k=E1.k[0],alpha=alpha,delta=delta)
-    Et.k[:TS-T] = linspace(E0.k[-1],E1.k[0],TS-T)
-    Et.update()
-    with open('E.pickle','wb') as f:
-        pickle.dump([E0, E1, Et, 0], f)
-    with open('G.pickle','wb') as f:
-        pickle.dump([g0.apath, g0.epath, g0.lpath, g1.apath, g1.epath, g1.lpath], f)
-    """http://stackoverflow.com/questions/2204155/
-    why-am-i-getting-an-error-about-my-class-defining-slots-when-trying-to-pickl"""
-    end_time = datetime.now()
-    print('Duration: {}'.format(end_time - start_time))
-
-#병렬처리를 위한 for loop 내 로직 분리
-def transition_sub1(g,T,TS,Et,a1,e1):
-    if (g.y >= T-1) and (g.y <= TS-(T+1)):
-        g.findvpath(Et.p[:,g.y-T+1:g.y+1])
-    elif (g.y < T-1):
-        g.findvpath(Et.p[:,:g.y+1])
-    else:
-        g.apath, g.epath = a1, e1
-
-
-def transition(N=15,beta=0.96):
-    with open('E.pickle','rb') as f:
-        [E0, E1, Et, it] = pickle.load(f)
-    with open('G.pickle','rb') as f:
-        [a0, e0, l0, a1, e1, l1] = pickle.load(f)
-    T = Et.T
-    TS = Et.TS
-    """Generate TS cohorts who die in t = 0,...,TS-1 with initial asset g0.apath[-t-1]"""
-    gs = [cohort(beta=beta,W=Et.W,R=Et.R,y=t,a0=(a0[-t-1] if t <= T-2 else 0))
-            for t in range(TS)]
-    """Iteratively Calculate all generations optimal consumption and labour supply"""
-    for n in range(N):
-        start_time = datetime.now()
-        print 'transition('+str(n)+') is start : {}'.format(start_time) 
-        jobs = []
-        for g in gs:
-            p = Process(target=transition_sub1, args=(g,T,TS,Et,a1,e1))
-            p.start()
-            jobs.append(p)
-            #병렬처리 개수 지정 20이면 20개 루프를 동시에 병렬로 처리
-            if len(jobs) % 20 == 0:
-                for p in jobs:
-                    p.join()
-                print 'transition('+str(n)+') is progressing : {}'.format(datetime.now())
-                jobs=[]
-        #            start_time_gs = datetime.now()
-        #            if (g.y >= T-1) and (g.y <= TS-(T+1)):
-        #                g.findvpath(Et.p[:,g.y-T+1:g.y+1])
-        #            elif (g.y < T-1):
-        #                g.findvpath(Et.p[:,:g.y+1])
-        #            else:
-        #                g.apath, g.epath = a1, e1
-        #            print('transition gs loop: {}'.format(datetime.now() - start_time_gs))
-        if len(jobs) > 0:
-            for p in jobs:
-                p.join()
-        Et.aggregate(gs)
-        Et.update()
-        print 'after',n+1,'iterations over all cohorts,','r:', E0.r[0], Et.r[0::30]
-        end_time = datetime.now()
-        print 'transition('+str(n)+') is end : {}'.format(end_time) 
-        print 'transition n loop: {}'.format(end_time - start_time)
-        with open('E.pickle','wb') as f:
-            pickle.dump([E0, E1, Et, n+1], f)
-        with open('GS.pickle','wb') as f:
-            pickle.dump([[gs[t].apath for t in range(TS)], [gs[t].cpath for t in range(TS)],
-                            [gs[t].lpath for t in range(TS)], n+1], f)
-        if Et.Converged:
-            print 'Transition Path Converged! in', n+1,'iterations with', Et.tol
-            break
-        if n >= N-1:
-            print 'Transition Path Not Converged! in', n+1,'iterations with', Et.tol
-            break
-
-
-def value(e, g, N=15):
-    start_time = datetime.now()
-    for n in range(N):
-        e.update()
-        g.findvpath(e.p)
-        e.aggregate([g])
-        if e.Converged:
-            print 'Economy Converged to SS! in',n+1,'iterations with', e.tol
-            break
-        if n >= N-1:
-            print 'Economy Not Converged in',n+1,'iterations with', e.tol
-            break
-    end_time = datetime.now()
-    print('Duration: {}'.format(end_time - start_time))
-    return e, g
 
 
 def spath(g):
@@ -466,50 +374,14 @@ def spath(g):
     ax.spines['right'].set_color('none')
     ax.tick_params(labelcolor='w', top='off', bottom='off', left='off', right='off')
     ax1.plot(g.apath)
-    ax2.plot(g.lpath)
+    ax2.plot(g.hpath)
     ax3.plot(g.cpath)
-    ax4.plot(g.upath)
-    ax.set_xlabel('generation')
-    ax1.set_title('Asset')
-    ax2.set_title('Labor')
+    ax4.plot(g.rpath)
+    ax.set_xlabel('Age')
+    ax1.set_title('Liquid Asset')
+    ax2.set_title('House')
     ax3.set_title('Consumption')
-    ax4.set_title('Utility')
-    plt.show()
-    # time.sleep(1)
-    # plt.close() # plt.close("all")
-
-
-def tpath():
-    with open('E.pickle','rb') as f:
-        [E0, E1, Et, it] = pickle.load(f)
-    fig = plt.figure(facecolor='white')
-    ax = fig.add_subplot(111)
-    ax1 = fig.add_subplot(321)
-    ax2 = fig.add_subplot(322)
-    ax3 = fig.add_subplot(323)
-    ax4 = fig.add_subplot(324)
-    ax5 = fig.add_subplot(325)
-    ax6 = fig.add_subplot(326)
-    fig.subplots_adjust(hspace=.5, wspace=.3, left=None, right=None, top=None, bottom=None)
-    ax.spines['top'].set_color('none')
-    ax.spines['bottom'].set_color('none')
-    ax.spines['left'].set_color('none')
-    ax.spines['right'].set_color('none')
-    ax.tick_params(labelcolor='w', top='off', bottom='off', left='off', right='off')
-    ax1.plot(Et.k)
-    ax2.plot(Et.r)
-    ax3.plot(Et.L)
-    ax4.plot(Et.w)
-    ax5.plot(Et.K)
-    ax6.plot(Et.C)
-    ax.set_xlabel('generation')
-    ax.set_title('R:' + str(Et.R) + 'W:' + str(Et.W) + 'TS:' + str(Et.TS), y=1.08)
-    ax1.set_title('Capital/Labor')
-    ax2.set_title('Interest Rate')
-    ax3.set_title('Labor')
-    ax4.set_title('Wage')
-    ax5.set_title('Capital')
-    ax6.set_title('Consumption')
+    ax4.set_title('Rent')
     plt.show()
     # time.sleep(1)
     # plt.close() # plt.close("all")
@@ -517,10 +389,11 @@ def tpath():
 
 if __name__ == '__main__':
     print 'starting...'
-    e = state(TG=1,ng=1,dng=0, W=45, R=30, qh=0.8, qr=0.2)
+    e = state(TG=1,ng=1,dng=0, W=45, R=30, qh=2.0, qr=0.4)
     e.printprices()
-    g = cohort(W=45, R=30,psi=10,beta=0.96, tcost=0.02, gamma=1, aL=-0.0, aH=8.0, aN=501)
+    g = cohort(W=45, R=30,psi=3.0,beta=0.99, tcost=0.1, gamma=1, aL=-1.0, aH=2.0, aN=501)
     g.findvpath(e.p)
     e.aggregate([g])
     e.update()
     e.printprices()
+    spath(g)
