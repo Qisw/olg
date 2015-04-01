@@ -53,6 +53,7 @@ class state:
         self.k = array([k for t in range(TS)], dtype=float)
         self.L = L = array([(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
         self.Hd = array([self.Hs for t in range(TS)], dtype=float)
+        self.Hd_Hs = array([0 for t in range(TS)], dtype=float)
         self.Rd = array([0 for t in range(TS)], dtype=float)
         #self.L = L = array([l*(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
         self.K = K = array([k*L[t] for t in range(TS)], dtype=float)
@@ -103,6 +104,7 @@ class state:
         self.k = self.K/self.L
         self.Hd = H1
         self.Rd = R1
+        self.Hd_Hs = self.Hd - self.Hs
         # print "K=%2.2f," %(self.K[0]),"L=%2.2f," %(self.L[0]),"K/L=%2.2f" %(self.k[0])
 
 
@@ -113,7 +115,7 @@ class state:
                     "Tr=%2.2f" %(self.Tr[i*self.T]), "b=%2.2f," %(self.b[i*self.T]),\
                     "qh=%2.2f" %(self.qh[i*self.T]), "qr=%2.2f," %(self.qr[i*self.T])
             print "K=%2.2f," %(self.K[i*self.T]),"L=%2.2f," %(self.L[i*self.T]),\
-                    "K/L=%2.2f" %(self.k[i*self.T]), "HD-HS =%2.2f" %(self.Hd[i*self.T]-self.Hs),\
+                    "K/L=%2.2f" %(self.k[i*self.T]), "HD-HS =%2.2f" %(self.Hd_Hs[i*self.T]),\
                     "RD=%2.2f" %(self.Rd[i*self.T])
 
 
@@ -141,17 +143,18 @@ class state:
 class cohort:
     """ This class is just a "struct" to hold the collection of primitives defining
     a generation """
-    def __init__(self, beta=0.99, sigma=2.0, gamma=1, aH=5.0, aL=0.0, y=-1,
+    def __init__(self, beta=0.99, sigma=2.0, gamma=1, aH=5.0, aL=0.0, y=-1, dti = 0.5,
         aN=101, psi=0.03, tol=0.01, neg=-1e10, W=45, R=30, a0 = 0, tcost = 0.0, ltv=0.7):
         self.beta, self.sigma, self.gamma, self.psi = beta, sigma, gamma, psi
         self.R, self.W, self.y = R, W, y
-        self.tcost, self.ltv = tcost, ltv
+        self.tcost, self.ltv, self.dti = tcost, ltv, dti
         self.T = T = (y+1 if (y >= 0) and (y <= W+R-2) else W+R)
         self.aH, self.aL, self.aN, self.aa = aH, aL, aN, aL+(aH-aL)*linspace(0,1,aN)
         self.tol, self.neg = tol, neg
         """ house sizes and number of feasible feasible house sizes """
-        self.hh = [0.0, 0.2, 0.5, 1.0]
+        self.hh = [0.0, 0.2, 0.5, 0.7, 1.0]
         # self.hh = loadtxt('hh.txt', delimiter='\n')
+        self.sp = loadtxt('sp.txt', delimiter='\n')  # survival probability
         self.hN = len(self.hh)
         """ age-specific productivity """
         self.ef = loadtxt('ef.txt', delimiter='\n')
@@ -181,7 +184,7 @@ class cohort:
         value and decision functions are calculated ***BACKWARD*** """
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
         T, aa, hh, aN, hN = self.T, self.aa, self.hh, self.aN, self.hN
-        psi, tcost, beta, gamma = self.psi, self.tcost, self.beta, self.gamma
+        psi, tcost, beta, gamma, sp = self.psi, self.tcost, self.beta, self.gamma, self.sp
         # y = -1 : the oldest generation
         for h in range(self.hN):
             for i in range(self.aN):
@@ -196,22 +199,21 @@ class cohort:
         # y = -2, -3,..., -60
         for y in range(-2, -(T+1), -1):
             income = Tr[y] + b[y] if y >= -self.R else Tr[y] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
-            mdti = (aa + income*0.3 >= 0).argmax() # DTI constraint
+            mdti = (aa + income*self.dti >= 0).argmax() # DTI constraint
             # print 'dit',income*0.3,mdti,aa[mdti]
             for h0 in range(self.hN):
                 at = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
                 ct = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
                 rt = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
-                vt = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
+                vt = array([[float('-inf') for i in range(aN)] for h in range(hN)], dtype=float)
                 casht = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
                 # print self.apath
                 for h1 in range(self.hN):
                     mltv = (aa + self.ltv*qh[y]*hh[h1] >= 0).argmax() # LTV constraint
                     # print (aa + self.ltv*qh[y]*hh[h1] > 0)
                     # print m0
-                    # mc = max(mltv,mdti)
-                    # m0 = max(0,mc)
-                    m0 = 0
+                    m0 = max(0,mltv,mdti)
+                    # m0 = 0
                     for i in range(self.aN):    # l = 0, 1, ..., 50
                         # Find a bracket within which optimal a' lies
                         m = max(0, m0)  # Rch91v.g uses m = max(0, m0-1)
@@ -222,7 +224,7 @@ class cohort:
                         # Find optimal a' using Golden Section Search
                         # print 'a=',self.aa[i],'bracket=','(',a0,',',c0,')'
                         if a0 == b0:
-                            at[h1,i] = self.aL
+                            at[h1,i] = aa[m0]
                         elif b0 == c0:
                             at[h1,i] = self.aH
                         else:
@@ -231,27 +233,31 @@ class cohort:
                                 return -self.findv(y, h0, h1, aa[i], a1, p)
                             result = minimize_scalar(objfn, bracket=(a0,b0,c0), method='Golden')
                             at[h1,i] = result.x
-
+                        # print y, h0, h1, i, m0, a0, b0, c0, 'a1=',at[h1,i]
                         # Compute consumption, rent and house
                         casht[h1,i] = self.budget(y,h0,h1,aa[i],at[h1,i],p)
                         ct[h1,i] = (casht[h1,i]+qr[y]*(hh[h0]+gamma))/(1+psi)
                         rt[h1,i] = (casht[h1,i]*psi-qr[y]*(hh[h0]+gamma))/((1+psi)*qr[y])
-                        vt[h1,i] = self.util(ct[h1,i],rt[h1,i]+hh[h0]) + beta*self.vtilde[y+1][h1](at[h1,i])
+                        vt[h1,i] = self.util(ct[h1,i],rt[h1,i]+hh[h0]) + beta*sp[y]*self.vtilde[y+1][h1](at[h1,i])
                 for i in range(self.aN):
                     h1 = vt[:,i].argmax()
+                    # print 'y,h0,h1',y, h0,i, 'h1',h1,'v=', vt[0,i], vt[1,i], vt[2,i], vt[3,i]
                     self.v[y,h0,i] = vt[h1,i]
                     self.co[y,h0,i] = ct[h1,i]
                     self.ro[y,h0,i] = rt[h1,i]
                     self.ho[y,h0,i] = h1
                     self.ao[y,h0,i] = at[h1,i]
+                    # print at[h1,i]
                     cash = casht[h1,i]
                 ai = [self.aN/4, self.aN*2/4, self.aN*3/4, self.aN-1]
                 # set_printoptions(precision=2)
-                if y%5 == 0:
+                if y % 15 == 0:
                     print '------------'
-                    print 'y=',y,'income=%2.2f'%(income),'h0=',h0
+                    print 'y=',y,'inc=%2.2f'%(income),'h0=',h0
                     for i in ai:
-                        print 'a0=%2.2f'%(aa[i]),'h1=%2.0f'%(self.ho[y,h0,i]),'a1=%2.2f'%(self.ao[y,h0,i]),\
+                        print 'ltv=%2.2f'%(hh[int(self.ho[y,h0,i])]*qh[y]*self.ltv),'dti=%2.2f'%(income*self.dti),\
+                                'a0=%2.2f'%(aa[i]),'h1=%2.0f'%(self.ho[y,h0,i]),\
+                                'a1=%2.2f'%(self.ao[y,h0,i]),\
                                 'c0=%2.2f'%(self.co[y,h0,i]),'r0=%2.2f'%(self.ro[y,h0,i])
                               # 'budget=%2.2f' %(cash),'c=%2.2f' %(self.co[y,h0,i]),'r=%2.2f' %(self.ro[y,h0,i])
                         # print '------','v1(0,a1)=%2.2f' %(beta*self.vtilde[y+1][0](self.ao[y,h,i])),\
@@ -300,14 +306,15 @@ class cohort:
         # print aa
         a, b, c = aa[0], 2*aa[0]-aa[1], 2*aa[0]-aa[2]
         # print 'abc=',a,b,c
+        minit = m
         m0 = m
         v0 = float('-inf')
         while (a > b) or (b > c):
             v1 = self.findv(y, h0, h1, aa[l], aa[m], p)
             # print y,l,m,'v0=%2.2f'%(v0),'v1=%2.2f'%(v1),a,b,c
             # print v1
-            if v1 >= v0:
-                a, b, = ([aa[m], aa[m]] if m == 0 else [aa[m-1], aa[m]])
+            if v1 > v0:
+                a, b, = ([aa[m], aa[m]] if m == minit else [aa[m-1], aa[m]])
                 v0, m0 = v1, m
             else:
                 c = aa[m]
@@ -323,12 +330,14 @@ class cohort:
         next period asset a1, current period consumption c and labor n
         a1 is always within aL and aH """
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
-        aa, hh = self.aa, self.hh
+        T, aa, hh, aN, hN = self.T, self.aa, self.hh, self.aN, self.hN
+        psi, tcost, beta, gamma, sp = self.psi, self.tcost, self.beta, self.gamma, self.sp
+
         cash = self.budget(y, h0, h1, a0, a1, p)
-        if cash + qr[y]*(hh[h0]+self.gamma) > 0:
-            co = (cash+qr[y]*(hh[h0]+self.gamma))/(1+self.psi)
-            ro = (cash*self.psi-qr[y]*(hh[h0]+self.gamma))/((1+self.psi)*qr[y])
-            v = self.util(co, ro+hh[h0]) + self.beta*self.vtilde[y+1][h1](a1)
+        if cash + qr[y]*(hh[h0]+gamma) > 0:
+            co = (cash+qr[y]*(hh[h0]+gamma))/(1+psi)
+            ro = (cash*psi-qr[y]*(hh[h0]+gamma))/((1+psi)*qr[y])
+            v = self.util(co, ro+hh[h0]) + beta*sp[y]*self.vtilde[y+1][h1](a1)
         else:
             v = self.neg #float('-inf')
         return v
@@ -358,9 +367,10 @@ class cohort:
         # (((c+self.psi)**self.gamma*(1-l)**(1-self.gamma))**(1-self.sigma))/(1-self.sigma)
 
 
-
-
-def spath(g):
+def spath(e, g):
+    title = 'psi=' + str(g.psi) + 'qh=' + str(e.qh[-1]) + 'qr=' + str(e.qr[-1]) \
+                    + 'Hd-Hs=%2.2f'%(e.Hd_Hs[-1]) + 'Rd=%2.2f'%(e.Rd[-1]) + 'ltv=' \
+                    + str(g.ltv) + 'dti=' + str(g.dti) + '.png'
     fig = plt.figure(facecolor='white')
     ax = fig.add_subplot(111)
     ax1 = fig.add_subplot(221)
@@ -378,22 +388,41 @@ def spath(g):
     ax3.plot(g.cpath)
     ax4.plot(g.rpath)
     ax.set_xlabel('Age')
+    ax.set_title(title, y=1.08)
     ax1.set_title('Liquid Asset')
     ax2.set_title('House')
     ax3.set_title('Consumption')
     ax4.set_title('Rent')
-    plt.show()
+    # plt.show()
+    fig.savefig(title)
     # time.sleep(1)
     # plt.close() # plt.close("all")
     
 
-if __name__ == '__main__':
-    print 'starting...'
-    e = state(TG=1,ng=1,dng=0, W=45, R=30, qh=2.0, qr=0.4)
+def main1(psi=0.1, qh=1.3, qr=0.05, ltv=0.6, dti=1.2, tcost=0.04):
+    e = state(TG=1, ng=1, dng=0, W=45, R=30, Hs=10, qh=qh, qr=qr)
     e.printprices()
-    g = cohort(W=45, R=30,psi=3.0,beta=0.99, tcost=0.1, gamma=1, aL=-1.0, aH=2.0, aN=501)
+    g = cohort(W=45, R=30, psi=psi, beta=0.96, tcost=tcost, gamma=1, aL=-1.0, aH=1.0, aN=501, ltv=ltv, dti=dti)
     g.findvpath(e.p)
     e.aggregate([g])
     e.update()
     e.printprices()
-    spath(g)
+    spath(e, g)
+    return e.Hd_Hs[-1], e.Rd[-1], e.r[-1]
+
+
+if __name__ == '__main__':
+    qhN = qrN = 5
+    ltvN = 4
+    qh = linspace(1,2,qhN)
+    qr = linspace(0.2,0.8,qrN)
+    ltv = linspace(0.4,1.0,ltvN)
+    House = array([[[0 for i in range(qrN)] for j in range(qhN)] for p in range(ltvN)])
+    Rent = array([[[0 for i in range(qrN)] for j in range(qhN)] for p in range(ltvN)])
+    Rate = array([[[0 for i in range(qrN)] for j in range(qhN)] for p in range(ltvN)])
+    for p in range(ltvN):
+        for i in range(qhN):
+            for j in range(qrN):
+                House[p,i,j], Rent[p,i,j], Rate[p,i,j] = main1(psi=0.1, qh=qh[i], qr=qr[j], ltv=ltv[p], dti=2.0, tcost=0.05)
+    with open('hrr.pickle','wb') as f:
+    pickle.dump([House, Rent, Rate], f)
