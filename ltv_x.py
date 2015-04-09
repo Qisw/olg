@@ -9,7 +9,7 @@ HOUSEHOLD'S UTILITY FUNCTION IS DIFFERENT FROM THAT OF SECTION 9.1. AND 9.2.
 
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize_scalar
-from numpy import linspace, array, absolute, loadtxt, prod, log
+from numpy import linspace, array, absolute, loadtxt, prod, log, random
 from matplotlib import pyplot as plt
 from datetime import datetime
 import time
@@ -53,9 +53,10 @@ class state:
         self.gy = array([gy for t in range(TS)], dtype=float)
         self.k = array([k for t in range(TS)], dtype=float)
         self.L = L = array([(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
-        self.Hd = array([self.Hs for t in range(TS)], dtype=float)
-        self.Hd_Hs = array([0 for t in range(TS)], dtype=float)
-        self.Rd = array([0 for t in range(TS)], dtype=float)
+        self.h = array([0 for t in range(TS)], dtype=float)
+        self.r = array([0 for t in range(TS)], dtype=float)
+        self.d = array([0 for t in range(TS)], dtype=float)
+        self.c = array([0 for t in range(TS)], dtype=float)
         #self.L = L = array([l*(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
         self.K = K = array([k*L[t] for t in range(TS)], dtype=float)
         self.C = C = array([0 for t in range(TS)], dtype=float)
@@ -70,12 +71,26 @@ class state:
         self.Tr = array([(Tax[t]+Beq[t]-G[t])/Pt[t] for t in range(TS)], dtype=float)
         self.qh = array([qh for t in range(TS)], dtype=float)
         self.qr = array([qr for t in range(TS)], dtype=float)
-        self.D = array([0 for t in range(TS)], dtype=float)
-        self.Dratio = array([0 for t in range(TS)], dtype=float)
         # container for r, w, b, tr, tw, tb, Tr
         self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr, self.qh, self.qr])
         # whether the capital stock has converged
         self.Converged = False
+
+
+    def sum(self, gs):
+        W, T = self.W, self.T
+        gn = len(gs)
+        self.h = array([sum([g.hpath[t] for g in gs]) for t in range(T)], dtype=float)
+        self.r = array([sum([g.rpath[t] for g in gs]) for t in range(T)], dtype=float)
+        self.d = array([sum([g.apath[t]*(g.apath[t]<0) for g in gs]) for t in range(T)], dtype=float)
+        self.c = array([sum([g.cpath[t] for g in gs]) for t in range(T)], dtype=float)
+
+        H = sum([self.h[y]*self.pop[-1,y] for y in range(T)])
+        R = sum([self.r[y]*self.pop[-1,y] for y in range(T)])
+        D = sum([self.d[y]*self.pop[-1,y] for y in range(T)])
+        C = sum([self.c[y]*self.pop[-1,y] for y in range(T)])
+        self.Dratio = -D/C
+        return H, R, D, C
 
 
     def aggregate(self, gs):
@@ -120,9 +135,9 @@ class state:
             print "r=%2.2f," %(self.r[i*self.T]*100),"w=%2.2f," %(self.w[i*self.T]),\
                     "Tr=%2.2f" %(self.Tr[i*self.T]), "b=%2.2f," %(self.b[i*self.T]),\
                     "qh=%2.2f" %(self.qh[i*self.T]), "qr=%2.2f," %(self.qr[i*self.T])
-            print "K=%2.2f," %(self.K[i*self.T]),"L=%2.2f," %(self.L[i*self.T]),\
-                    "K/L=%2.2f" %(self.k[i*self.T]), "HD=%2.2f" %(self.Hd[i*self.T]),\
-                    "RD=%2.2f" %(self.Rd[i*self.T])
+            # print "K=%2.2f," %(self.K[i*self.T]),"L=%2.2f," %(self.L[i*self.T]),\
+            #         "K/L=%2.2f" %(self.k[i*self.T]), "HD=%2.2f" %(self.Hd[i*self.T]),\
+            #         "RD=%2.2f" %(self.Rd[i*self.T])
 
 
     def update(self):
@@ -159,25 +174,34 @@ class cohort:
         self.aa = (aL+aH)/2.0+(aH-aL)/2.0*linspace(-1,1,aN)
         self.tol, self.neg = tol, neg
         """ house sizes and number of feasible feasible house sizes """
-        self.hh = array([0.0, 0.4, 1.0])
+        # self.hh = array([0.0, 0.4, 1.0])
+        self.hh = array([0.0, 1.0])
         # self.hh = loadtxt('hh.txt', delimiter='\n')
         self.sp = loadtxt('sp.txt', delimiter='\n')  # survival probability
-        self.hN = len(self.hh)
+        self.hN = hN = len(self.hh)
         """ age-specific productivity """
         self.ef = loadtxt('ef.txt', delimiter='\n')
+        """ employment status """
+        self.xx = [1, 0.4] #array([[0.4, 1] for y in range(T)], dtype=float)  # if unemployed, 40% of market wage is paid
+        self.xN = xN = len(self.xx) #array([len(self.xx[y]) for y in range(T)], dtype=int)
+        self.uu = 0.1
+        self.ee = (23+self.uu)/24.0  # invariant distribution is (0.04 0.96)
+        self.trx = array([[self.ee, 1-self.ee], [1-self.uu, self.uu]], dtype=float)
         """ value function and its interpolation """
-        self.v = array([[[0 for i in range(aN)] for h in range(self.hN)] for y in range(T)], dtype=float)
-        self.vtilde = [[[] for h in range(self.hN)] for y in range(T)]
-        """ policy functions used in value function method """
-        self.ao = array([[[0 for i in range(aN)] for h in range(self.hN)] for y in range(T)], dtype=float)
-        self.ho = array([[[0 for i in range(aN)] for h in range(self.hN)] for y in range(T)], dtype=int)
-        self.co = array([[[0 for i in range(aN)] for h in range(self.hN)] for y in range(T)], dtype=float)
-        self.ro = array([[[0 for i in range(aN)] for h in range(self.hN)] for y in range(T)], dtype=float)
+        self.v = array([[[[0 for i in range(aN)] for h in range(hN)] for x in range(xN)] for y in range(T)], dtype=float)
+        self.vtilde = [[[[] for h in range(hN)] for x in range(xN)] for y in range(T)]
+        """ policy functions and interpolation for optimal next period asset """
+        self.ao = array([[[[0 for i in range(aN)] for h in range(hN)] for x in range(xN)] for y in range(T)], dtype=float)
+        self.atilde = [[[[] for h in range(hN)] for x in range(xN)] for y in range(T)]
+        self.ho = array([[[[0 for i in range(aN)] for h in range(hN)] for x in range(xN)] for y in range(T)], dtype=int)
+        self.co = array([[[[0 for i in range(aN)] for h in range(hN)] for x in range(xN)] for y in range(T)], dtype=float)
+        self.ro = array([[[[0 for i in range(aN)] for h in range(hN)] for x in range(xN)] for y in range(T)], dtype=float)
         """ the following paths for a, c, n and u are used in direct and value function methods
         In direct method, those paths are directly calculated, while in the value function
         method the paths are calculated from value and policy functions """
         self.apath = array([a0 for y in range(T)], dtype=float)
         self.hpath = array([0 for y in range(T)], dtype=int)
+        self.xpath = array([1 for y in range(T)], dtype=int)
         self.cpath = array([0 for y in range(T)], dtype=float)
         self.rpath = array([0 for y in range(T)], dtype=float)
         self.epath = array([0 for y in range(T)], dtype=float) # labor supply in efficiency unit
@@ -190,87 +214,114 @@ class cohort:
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
         T, aa, hh, aN, hN = self.T, self.aa, self.hh, self.aN, self.hN
         # y = -1 : the oldest generation
-        for h in range(self.hN):
-            for i in range(self.aN):
-                cash, self.co[-1,h,i], self.ro[-1,h,i] = self.findcr(-1, h, 0, aa[i], 0, p)
-                self.v[-1,h,i] = self.util(self.co[-1,h,i], self.ro[-1,h,i]+hh[h])
-            self.vtilde[-1][h] = interp1d(aa, self.v[-1,h], kind='cubic')
+        for h0 in range(hN):
+            for i in range(aN):
+                di, self.co[-1,0,h0,i], self.ro[-1,0,h0,i] = self.findcr(-1, 0, h0, 0, aa[i], 0, p)
+                self.v[-1,0,h0,i] = self.util(self.co[-1,0,h0,i], self.ro[-1,0,h0,i]+hh[h0])
+            self.vtilde[-1][0][h0] = interp1d(aa, self.v[-1,0,h0], kind='cubic')
+            self.atilde[-1][0][h0] = interp1d(aa, linspace(0,0,aN), kind='cubic')
         # y = -2, -3,..., -75
         for y in range(-2, -(T+1), -1):
-            income = Tr[y] + b[y] if y >= -self.R else Tr[y] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
-            mdti = (aa + income*self.dti >= 0).argmax() # DTI constraint
-            for h0 in range(self.hN):
-                at = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
-                ct = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
-                rt = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
-                vt = array([[self.neg for i in range(aN)] for h in range(hN)], dtype=float)
-                casht = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
-                # print self.apath
-                for h1 in range(self.hN):
-                    mltv = (aa + self.ltv*qh[y]*hh[h1] >= 0).argmax() # LTV constraint
-                    m0 = max(0,mltv,mdti)
-                    for i in range(self.aN):    # l = 0, 1, ..., 50
-                        # Find a bracket within which optimal a' lies
-                        m = max(0, m0)  # Rch91v.g uses m = max(0, m0-1)
-                        # print m
-                        m0, a0, b0, c0 = self.GetBracket(y, h0, h1, i, m, p)
-                        if a0 == b0:
-                            at[h1,i] = aa[m0]
-                        elif b0 == c0:
-                            at[h1,i] = self.aH
-                        else:
-                            def objfn(a1): # Define objective function for optimal a'
-                                return -self.findv(y, h0, h1, aa[i], a1, p)
-                            result = minimize_scalar(objfn, bracket=(a0,b0,c0), method='Golden')
-                            at[h1,i] = result.x
-                        # Compute consumption, rent and house
-                        casht[h1,i], ct[h1,i], rt[h1,i] = self.findcr(y, h0, h1, aa[i], at[h1,i], p)
-                        vt[h1,i] = self.util(ct[h1,i],rt[h1,i]+hh[h0]) + self.beta*self.sp[y]*self.vtilde[y+1][h1](at[h1,i])
-                for i in range(self.aN):
-                    h1 = vt[:,i].argmax()
-                    self.ho[y,h0,i] = h1
-                    self.v[y,h0,i] = vt[h1,i]
-                    self.co[y,h0,i] = ct[h1,i]
-                    self.ro[y,h0,i] = rt[h1,i]
-                    self.ao[y,h0,i] = at[h1,i]
-                    cash = casht[h1,i]
-                ai = [self.aN/4, self.aN*2/4, self.aN*3/4, self.aN-1]
-                if y % 15 == 0 and h0 == 0:
-                    print '------------'
-                    print 'y=',y,'inc=%2.2f'%(income),'h0=',h0
-                    for i in ai:
-                        print 'ltv=%2.2f'%(hh[self.ho[y,h0,i]]*qh[y]*self.ltv),'dti=%2.2f'%(income*self.dti),\
-                                'a0=%2.2f'%(aa[i]),'h1=%2.0f'%(self.ho[y,h0,i]),\
-                                'a1=%2.2f'%(self.ao[y,h0,i]),\
-                                'c0=%2.2f'%(self.co[y,h0,i]),'r0=%2.2f'%(self.ro[y,h0,i])
-                self.vtilde[y][h0] = interp1d(aa, self.v[y,h0], kind='cubic')
+            """ adjust productivity grid and transition matrix according to age """
+            if y >= -(self.R):
+                xx, nxx, trx = array([0]), array([0]), array([[1]])
+            elif y == -(self.R+1):
+                xx, nxx, trx = self.xx, array([0]), array([[1] for x0 in range(self.xN)])
+            else:
+                xx, nxx, trx = self.xx, self.xx, self.trx
+            for x0 in range(len(xx)):
+                income = Tr[y] + b[y] if y >= -self.R else Tr[y] + (1-tw[y]-tb[y])*w[y]*self.ef[y]*xx[x0]
+                mdti = (aa + income*self.dti >= 0).argmax() # DTI constraint
+                for h0 in range(hN):
+                    at = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
+                    ct = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
+                    rt = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
+                    vt = array([[self.neg for i in range(aN)] for h in range(hN)], dtype=float)
+                    # print self.apath
+                    for h1 in range(hN):
+                        mltv = (aa + self.ltv*qh[y]*hh[h1] >= 0).argmax() # LTV constraint
+                        m0 = max(0,mltv,mdti)
+                        for i in range(aN):    # l = 0, 1, ..., 50
+                            # Find a bracket within which optimal a' lies
+                            m = max(0, m0)  # Rch91v.g uses m = max(0, m0-1)
+                            # print m
+                            m0, a0, b0, c0 = self.GetBracket(y, x0, h0, h1, i, m, p)
+                            if a0 == b0:
+                                at[h1,i] = aa[m0]
+                            elif b0 == c0:
+                                at[h1,i] = self.aH
+                            else:
+                                def objfn(a1): # Define objective function for optimal a'
+                                    return -self.findv(y, x0, h0, h1, aa[i], a1, p)
+                                result = minimize_scalar(objfn, bracket=(a0,b0,c0), method='Golden')
+                                at[h1,i] = result.x
+                            # Compute consumption, rent and house
+                            di, ct[h1,i], rt[h1,i] = self.findcr(y, x0, h0, h1, aa[i], at[h1,i], p)
+                            ev = sum([self.vtilde[y+1][x1][h1](at[h1,i])*trx[x0,x1] for x1 in range(len(nxx))])
+                            vt[h1,i] = self.util(ct[h1,i],rt[h1,i]+hh[h0]) + self.beta*self.sp[y]*ev
+                    for i in range(self.aN):
+                        h1 = vt[:,i].argmax()
+                        self.ho[y,x0,h0,i] = h1
+                        self.v[y,x0,h0,i] = vt[h1,i]
+                        self.co[y,x0,h0,i] = ct[h1,i]
+                        self.ro[y,x0,h0,i] = rt[h1,i]
+                        self.ao[y,x0,h0,i] = at[h1,i]
+                    self.vtilde[y][x0][h0] = interp1d(aa, self.v[y,x0,h0], kind='cubic')
+                    self.atilde[y][x0][h0] = interp1d(aa, self.ao[y,x0,h0], kind='cubic')
+
+                    ai = [self.aN/4, self.aN*2/4, self.aN*3/4, self.aN-1]
+                    if y % 15 == 0 and h0 == 0 and x0 == 0:
+                        print '------------'
+                        print 'y=',y,'inc=%2.2f'%(income),'h0=',h0
+                        for i in ai:
+                            print 'ltv=%2.2f'%(hh[self.ho[y,x0,h0,i]]*qh[y]*self.ltv),'dti=%2.2f'%(income*self.dti),\
+                                    'a0=%2.2f'%(aa[i]),'h1=%2.0f'%(self.ho[y,x0,h0,i]),\
+                                    'a1=%2.2f'%(self.ao[y,x0,h0,i]),\
+                                    'c0=%2.2f'%(self.co[y,x0,h0,i]),'r0=%2.2f'%(self.ro[y,x0,h0,i])
 
 
-    def simulatelife(self, p, ainit=0, hinit=0):
+    def simulatelife(self, p, ainit=0, hinit=0, xinit=0):
         """ Given prices, transfers, benefits and tax rates over one's life-cycle, 
         value and decision functions are calculated ***BACKWARD*** """
         T, hh = self.T, self.hh
         """ find asset and labor supply profiles over life-cycle from value function"""
         # generate each generation's asset, consumption and labor supply forward
-        self.apath[0], self.hpath[0] = ainit, hinit
+        self.apath[0], self.hpath[0], self.xpath[0] = ainit, hinit, xinit
         for y in range(T-1):    # y = 0, 1,..., 58
-            self.apath[y+1] = self.clip(interp1d(self.aa, self.ao[y,self.hpath[y]], kind='cubic')(self.apath[y]))
+            if y >= -(self.R):
+                nxx, trx = array([0]), array([[1]])
+            elif y == -(self.R+1):
+                nxx, trx = array([0]), array([[1] for x0 in range(self.xN)])
+            else:
+                nxx, trx = self.xx, self.trx
+            self.apath[y+1] = self.clip(self.atilde[y][self.xpath[y]][self.hpath[y]](self.apath[y]))
+            
             v0 = self.neg
             for h1 in range(self.hN):
-                di, c1, r1 = self.findcr(y-T, self.hpath[y], h1, self.apath[y], self.apath[y+1], p)
+                di, c1, r1 = self.findcr(y-T, self.xpath[y], self.hpath[y], h1, self.apath[y], self.apath[y+1], p)
                 if c1 > 0:
-                    v1 = self.util(c1, r1+hh[self.hpath[y]]) \
-                            + self.beta*self.sp[y]*self.vtilde[y+1][h1](self.apath[y+1])
+                    ev = sum([self.vtilde[y+1][x1][h1](self.apath[y+1])*trx[self.xpath[y],x1] for x1 in range(len(nxx))])
+                    v1 = self.util(c1, r1+hh[self.hpath[y]]) + self.beta*self.sp[y]*ev
                     if v1 > v0:
                         v0, self.cpath[y], self.rpath[y], self.hpath[y+1] = v1, c1, r1, h1
             self.upath[y] = self.util(self.cpath[y], self.rpath[y]+hh[self.hpath[y]])
+            self.xpath[y+1] = self.nextx(y,self.xpath[y])
         # the oldest generation's consumption and labor supply
         di, self.cpath[T-1], self.rpath[T-1] = self.findcr(-1, self.hpath[-1], 0, self.apath[-1], 0, p)
         self.upath[T-1] = self.util(self.cpath[T-1], self.rpath[T-1]+hh[self.hpath[T-1]])
         self.epath = self.ef[-self.T:]
 
 
-    def GetBracket(self, y, h0, h1, l, m, p):
+    def nextx(self, y, x0):
+        """ return next period nx given current period x """
+        if y >= self.T-(self.R+1):
+            return 0
+        else:
+            return random.binomial(1,self.trx[x0,1])
+            # return 1*(random.random()>self.uu) if x == 0 else 1*(random.random()>(1-self.ee))
+
+
+    def GetBracket(self, y, x0, h0, h1, l, m, p):
         """ Find a bracket (a,b,c) such that policy function for next period asset level, 
         a[x;asset[l],y] lies in the interval (a,b) """
         aa = self.aa
@@ -281,7 +332,7 @@ class cohort:
         """ The slow part of if slope != float("inf") is no doubt converting 
         the string to a float. """
         while (a > b) or (b > c):
-            v1 = self.findv(y, h0, h1, aa[l], aa[m], p)
+            v1 = self.findv(y, x0, h0, h1, aa[l], aa[m], p)
             if v1 > v0:
                 a, b, = ([aa[m], aa[m]] if m == minit else [aa[m-1], aa[m]])
                 v0, m0 = v1, m
@@ -293,23 +344,34 @@ class cohort:
         return m0, a, b, c
 
 
-    def findv(self, y, h0, h1, a0, a1, p):
+    def findv(self, y, x0, h0, h1, a0, a1, p):
         """ Return the value at the given generation and asset a0 and 
         corresponding consumption and labor supply when the agent chooses his 
         next period asset a1, current period consumption c and labor n
         a1 is always within aL and aH """
-        di, co, ro = self.findcr(y, h0, h1, a0, a1, p)
+        if y >= -(self.R):
+            nxx, trx = array([0]), array([[1]])
+        elif y == -(self.R+1):
+            nxx, trx = array([0]), array([[1] for x0 in range(self.xN)])
+        else:
+            nxx, trx = self.xx, self.trx
+
+        di, co, ro = self.findcr(y, x0, h0, h1, a0, a1, p)
+
         if co > 0:
-            value = self.util(co, ro+self.hh[h0]) + self.beta*self.sp[y]*self.vtilde[y+1][h1](a1)
+            ev = sum([self.vtilde[y+1][x1][h1](a1)*trx[x0,x1] for x1 in range(len(nxx))])
+            value = self.util(co, ro+self.hh[h0]) + self.beta*self.sp[y]*ev
         else:
             value = self.neg
         return value
 
 
-    def findcr(self, y, h0, h1, a0, a1, p):
+    def findcr(self, y, x0, h0, h1, a0, a1, p):
         """ FIND budget, consumption and rent given next period house and asset """
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
-        income = b[y] + Tr[y] if y >= -self.R else (1-tw[y]-tb[y])*w[y]*self.ef[y] + Tr[y]
+
+        income = b[y] + Tr[y] if y >= -self.R else (1-tw[y]-tb[y])*w[y]*self.ef[y]*self.xx[x0] + Tr[y]
+
         di = a0*(1+(1-tr[y])*r[y]) + (self.hh[h0]-self.hh[h1])*qh[y] \
                 - self.hh[h0]*qh[y]*(h0!=h1)*self.tcost - a1 + income
         co = (di + qr[y]*(self.hh[h0]+self.gamma))/(1+self.psi)
@@ -375,13 +437,17 @@ def spath(e, g):
 if __name__ == '__main__':
     e = state(TG=1, k=4.2, ng=1, dng=0, W=45, R=30, Hs=60, qh=1.15, qr=0.0420)
     e.printprices()
-    g = cohort(W=45, R=30, psi=0.1, beta=0.96, tcost=0.05, gamma=0.99, aL=-1.0, aH=2.0, aN=301, ltv=0.6, dti=2.0)
+    g = cohort(W=45, R=30, psi=0.1, beta=0.96, tcost=0.05, gamma=0.99, aL=-1.0, aH=2.0, aN=151, ltv=0.6, dti=2.0)
     g.valueNpolicy(e.p)
-    g.simulatelife(e.p)
-    e.aggregate([g])
+    print 'simulation starts...'
+    gs = []
+    for i in range(10):
+        g.simulatelife(e.p, xinit=random.binomial(1,0.04))
+        gs.append(g)
+    print e.sum(gs)
     # e.update()
     # e.printprices()
-    spath(e, g)
+    # spath(e, g)
 
 def gridsearch():
     qhN = qrN = 5
