@@ -360,6 +360,7 @@ def spath(e, g):
     # plt.close() # plt.close("all")
     
 
+<<<<<<< Updated upstream
 # def main1(psi=0.1, qh=1.050, qr=0.04145, ltv=0.4, dti=1.2, tcost=0.05):
 #     e = state(TG=1, k=4.2, ng=1, dng=0, W=45, R=30, Hs=60, qh=qh, qr=qr)
 #     e.printprices()
@@ -376,6 +377,12 @@ if __name__ == '__main__':
     e = state(TG=1, k=4.2, ng=1, dng=0, W=45, R=30, Hs=60, qh=1.15, qr=0.0420)
     e.printprices()
     g = cohort(W=45, R=30, psi=0.1, beta=0.96, tcost=0.05, gamma=0.99, aL=-1.0, aH=2.0, aN=301, ltv=0.6, dti=2.0)
+=======
+def main1(psi=0.1, qh=0.9379, qr=0.04145, ltv=0.4, dti=1.2, tcost=0.05):
+    e = state(TG=1, k=4.2, ng=1, dng=0, W=45, R=30, Hs=60, qh=qh, qr=qr)
+    e.printprices()
+    g = cohort(W=45, R=30, psi=psi, beta=0.96, tcost=tcost, gamma=0.99, aL=-1.0, aH=2.5, aN=351, ltv=ltv, dti=dti)
+>>>>>>> Stashed changes
     g.valueNpolicy(e.p)
     g.simulatelife(e.p)
     e.aggregate([g])

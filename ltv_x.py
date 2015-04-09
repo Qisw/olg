@@ -288,9 +288,9 @@ class cohort:
         # generate each generation's asset, consumption and labor supply forward
         self.apath[0], self.hpath[0], self.xpath[0] = ainit, hinit, xinit
         for y in range(T-1):    # y = 0, 1,..., 58
-            if y >= -(self.R):
+            if y >= T-(self.R):
                 nxx, trx = array([0]), array([[1]])
-            elif y == -(self.R+1):
+            elif y == T-(self.R+1):
                 nxx, trx = array([0]), array([[1] for x0 in range(self.xN)])
             else:
                 nxx, trx = self.xx, self.trx
@@ -300,6 +300,7 @@ class cohort:
             for h1 in range(self.hN):
                 di, c1, r1 = self.findcr(y-T, self.xpath[y], self.hpath[y], h1, self.apath[y], self.apath[y+1], p)
                 if c1 > 0:
+                    print nxx, trx, self.xpath[y], y, h1
                     ev = sum([self.vtilde[y+1][x1][h1](self.apath[y+1])*trx[self.xpath[y],x1] for x1 in range(len(nxx))])
                     v1 = self.util(c1, r1+hh[self.hpath[y]]) + self.beta*self.sp[y]*ev
                     if v1 > v0:
@@ -307,7 +308,7 @@ class cohort:
             self.upath[y] = self.util(self.cpath[y], self.rpath[y]+hh[self.hpath[y]])
             self.xpath[y+1] = self.nextx(y,self.xpath[y])
         # the oldest generation's consumption and labor supply
-        di, self.cpath[T-1], self.rpath[T-1] = self.findcr(-1, self.hpath[-1], 0, self.apath[-1], 0, p)
+        di, self.cpath[T-1], self.rpath[T-1] = self.findcr(-1, 0, self.hpath[-1], 0, self.apath[-1], 0, p)
         self.upath[T-1] = self.util(self.cpath[T-1], self.rpath[T-1]+hh[self.hpath[T-1]])
         self.epath = self.ef[-self.T:]
 
