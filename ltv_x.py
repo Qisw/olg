@@ -78,8 +78,7 @@ class state:
 
 
     def sum(self, gs):
-        W, T = self.W, self.T
-        gn = len(gs)
+        T = self.T
         self.h = array([sum([g.hpath[t] for g in gs]) for t in range(T)], dtype=float)
         self.r = array([sum([g.rpath[t] for g in gs]) for t in range(T)], dtype=float)
         self.d = array([sum([g.apath[t]*(g.apath[t]<0) for g in gs]) for t in range(T)], dtype=float)
@@ -389,6 +388,56 @@ class cohort:
         return log(c) + self.psi*log(s+self.gamma) if c > 0 else self.neg
 
 
+class agent:
+    """ This class is just a "struct" to hold an agent's lifecycle behaviour """
+    def __init__(self, g):
+        self.T = T = g.T
+        """ the following paths for a, c, n and u are used in direct and value function methods
+        In direct method, those paths are directly calculated, while in the value function
+        method the paths are calculated from value and policy functions """
+        self.apath = array([0 for y in range(T)], dtype=float)
+        self.hpath = array([0 for y in range(T)], dtype=int)
+        self.xpath = array([0 for y in range(T)], dtype=int)
+        self.cpath = array([0 for y in range(T)], dtype=float)
+        self.rpath = array([0 for y in range(T)], dtype=float)
+        self.epath = array([0 for y in range(T)], dtype=float) # labor supply in efficiency unit
+        self.upath = array([0 for y in range(T)], dtype=float)
+
+
+    def simulatelife(self, g, p, ainit=0, hinit=0, xinit=0):
+        """ Given prices, transfers, benefits and tax rates over one's life-cycle, 
+        value and decision functions are calculated ***BACKWARD*** """
+        T, hh = g.T, g.hh
+        """ find asset and labor supply profiles over life-cycle from value function"""
+        # generate each generation's asset, consumption and labor supply forward
+        self.apath[0], self.hpath[0], self.xpath[0] = ainit, hinit, xinit
+        for y in range(T-1):    # y = 0, 1,..., 58
+            if y >= T-(g.R):
+                nxx, trx = array([0]), array([[1]])
+            elif y == T-(g.R+1):
+                nxx, trx = array([0]), array([[1] for x0 in range(g.xN)])
+            else:
+                nxx, trx = g.xx, g.trx
+            self.apath[y+1] = g.clip(g.atilde[y][self.xpath[y]][self.hpath[y]](self.apath[y]))
+            
+            v0 = g.neg
+            for h1 in range(g.hN):
+                di, c1, r1 = g.findcr(y-T, self.xpath[y], self.hpath[y], h1, self.apath[y], self.apath[y+1], p)
+                if c1 > 0:
+                    # print nxx, trx, self.xpath[y], y, h1
+                    ev = sum([g.vtilde[y+1][x1][h1](self.apath[y+1])*trx[self.xpath[y],x1] for x1 in range(len(nxx))])
+                    v1 = g.util(c1, r1+hh[self.hpath[y]]) + g.beta*g.sp[y]*ev
+                    if v1 > v0:
+                        v0, self.cpath[y], self.rpath[y], self.hpath[y+1] = v1, c1, r1, h1
+            self.upath[y] = g.util(self.cpath[y], self.rpath[y]+hh[self.hpath[y]])
+            self.xpath[y+1] = g.nextx(y,self.xpath[y])
+        # the oldest generation's consumption and labor supply
+        di, self.cpath[T-1], self.rpath[T-1] = g.findcr(-1, 0, self.hpath[-1], 0, self.apath[-1], 0, p)
+        self.upath[T-1] = g.util(self.cpath[T-1], self.rpath[T-1]+hh[self.hpath[T-1]])
+        self.epath = g.ef[-self.T:]
+
+
+
 def spath(e, g):
     title = 'qh=' + str(e.qh[-1]) + 'qr=' + str(e.qr[-1]) \
                     + 'Hd=%2.2f'%(e.Hd[-1]) + 'Rd=%2.2f'%(e.Rd[-1]) + 'ltv=' \
@@ -436,16 +485,15 @@ def spath(e, g):
 #     return e.Hd_Hs[-1], e.Rd[-1], e.r[-1], e.Dratio[-1]
 
 if __name__ == '__main__':
-    e = state(TG=1, k=4.2, ng=1, dng=0, W=45, R=30, Hs=60, qh=1.15, qr=0.0420)
+    e = state(TG=1, k=4.2, ng=1, dng=0, W=45, R=30, Hs=60, qh=1.15, qr=0.0450)
     e.printprices()
-    g = cohort(W=45, R=30, psi=0.1, beta=0.96, tcost=0.05, gamma=0.99, aL=-1.0, aH=2.0, aN=151, ltv=0.6, dti=2.0)
+    g = cohort(W=45, R=30, psi=0.1, beta=0.96, tcost=0.05, gamma=0.99, aL=-1.0, aH=2.0, aN=301, ltv=0.6, dti=2.0)
     g.valueNpolicy(e.p)
     print 'simulation starts...'
-    gs = []
-    for i in range(10):
-        g.simulatelife(e.p, xinit=random.binomial(1,0.04))
-        gs.append(g)
-    print e.sum(gs)
+    aa = [agent(g) for i in range(100)]
+    for a in aa:
+        a.simulatelife(g, e.p, xinit=random.binomial(1,0.04))
+    print e.sum(aa)
     # e.update()
     # e.printprices()
     # spath(e, g)
