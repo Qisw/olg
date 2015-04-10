@@ -24,7 +24,7 @@ class state:
     an economy in which one or multiple generations live """
     def __init__(self, alpha=0.3, delta=0.08, phi=0.8, tol=0.01, Hs = 60,
         tr = 0.15, tw = 0.24, zeta=0.35, gy = 0.195, qh = 10, qr = 0.3,
-        k=3.5, l=0.3, TG=4, W=45, R=30, ng = 1.01, dng = 0.0):
+        k=3.5, l=0.3, TG=4, W=45, R=30):
         # tr = 0.429, tw = 0.248, zeta=0.5, gy = 0.195, in Section 9.3. in Heer/Maussner
         # tr = 0.01, tw = 0.11, zeta=0.15, gy = 0.195, qh = 0.1, qr = 0.09,
         """tr, tw and tb are tax rates on capital return, wage and tax for pension.
@@ -37,126 +37,84 @@ class state:
         self.W, self.R = W, R
         self.T = T = (W+R)
         self.TS = TS = (W+R)*TG
-        ng0, ng1 = ng, ng + dng
-        sp = loadtxt('sp.txt', delimiter='\n')  # survival probability
-        m0 = array([prod(sp[:t+1])/ng0**t for t in range(T)], dtype=float)
-        m1 = array([prod(sp[:t+1])/ng1**t for t in range(T)], dtype=float)
-        self.sp = array([sp for t in range(TS)], dtype=float)
-        self.pop = array([m1*ng1**(t+1) for t in range(TS)], dtype=float)
-        for t in range(T-1):
-            self.pop[t,t+1:] = m0[t+1:]*ng0**(t+1)
+        self.sp = sp = loadtxt('sp.txt', delimiter='\n')  # survival probability
+        self.pop = array([prod(sp[:t+1]) for t in range(T)], dtype=float)
         """Construct containers for market prices, tax rates, transfers, other aggregate variables"""
-        self.Pt = Pt = array([sum(self.pop[t]) for t in range(TS)], dtype=float) 
-        self.Pr = Pr = array([sum([self.pop[t,y] for y in range(W,T)]) for t in range(TS)], dtype=float) 
-        self.tr = array([tr for t in range(TS)], dtype=float)
-        self.tw = array([tw for t in range(TS)], dtype=float)
-        self.gy = array([gy for t in range(TS)], dtype=float)
-        self.k = array([k for t in range(TS)], dtype=float)
-        self.L = L = array([(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
-        self.h = array([0 for t in range(TS)], dtype=float)
-        self.r = array([0 for t in range(TS)], dtype=float)
-        self.d = array([0 for t in range(TS)], dtype=float)
-        self.c = array([0 for t in range(TS)], dtype=float)
-        #self.L = L = array([l*(Pt[t]-Pr[t]) for t in range(TS)], dtype=float)
-        self.K = K = array([k*L[t] for t in range(TS)], dtype=float)
-        self.C = C = array([0 for t in range(TS)], dtype=float)
-        self.Beq = Beq = array([K[t]/Pt[t]*sum((1-self.sp[t])*self.pop[t]) for t in range(TS)], dtype=float)
-        self.y = y = array([k**alpha for t in range(TS)], dtype=float)
-        self.r = r = array([(alpha)*k**(alpha-1) - delta for t in range(TS)], dtype=float)
-        self.w = w = array([(1-alpha)*k**alpha for t in range(TS)], dtype=float)
-        self.tb = tb = array([zeta*(1-tw)*Pr[t]/(L[t]+zeta*Pr[t]) for t in range(TS)], dtype=float)
-        self.b = array([zeta*(1-tw-tb[t])*w[t] for t in range(TS)], dtype=float)
-        self.Tax = Tax = array([tw*w[t]*L[t]+tr*r[t]*K[t] for t in range(TS)], dtype=float)
-        self.G = G = array([gy*y[t]*L[t] for t in range(TS)], dtype=float)
-        self.Tr = array([(Tax[t]+Beq[t]-G[t])/Pt[t] for t in range(TS)], dtype=float)
-        self.qh = array([qh for t in range(TS)], dtype=float)
-        self.qr = array([qr for t in range(TS)], dtype=float)
+        self.Pt = Pt = sum(self.pop)
+        self.Pr = Pr = sum([self.pop[y] for y in range(W,T)])
+        self.tr = tr
+        self.tw = tw
+        self.gy = gy
+        self.k = k
+        self.L = L = Pt-Pr
+        self.h = array([0 for y in range(T)], dtype=float)
+        self.rent = array([0 for y in range(T)], dtype=float)
+        self.a = array([0 for y in range(T)], dtype=float)
+        self.d = array([0 for y in range(T)], dtype=float)
+        self.c = array([0 for y in range(T)], dtype=float)
+        self.l = array([0 for y in range(T)], dtype=float)
+        self.beq = array([0 for y in range(T)], dtype=float)
+        self.H = 0
+        self.R = 0
+        self.A = 0
+        self.D = 0
+        self.C = 0
+        self.DebtRatio = 0
+        
+        self.K = K = k*L
+        self.Beq = Beq = 0.28
+        # self.Beq = Beq = array([K[t]/Pt[t]*sum((1-self.sp[t])*self.pop[t]) for t in range(TS)], dtype=float)
+        self.y = y = k**alpha
+        self.r = r = (alpha)*k**(alpha-1) - delta
+        self.w = w = (1-alpha)*k**alpha
+        self.tb = tb = zeta*(1-tw)*Pr/(L+zeta*Pr)
+        self.b = zeta*(1-tw-tb)*w
+        
+        self.Tax = Tax = 11.0
+        self.G = G = 6.72
+        self.Tr = 0.076
+        self.qh = qh
+        self.qr = qr
         # container for r, w, b, tr, tw, tb, Tr
         self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr, self.qh, self.qr])
-        # whether the capital stock has converged
-        self.Converged = False
 
 
     def sum(self, gs):
         T = self.T
-        self.h = array([sum([g.hpath[t] for g in gs]) for t in range(T)], dtype=float)
-        self.r = array([sum([g.rpath[t] for g in gs]) for t in range(T)], dtype=float)
-        self.d = array([sum([g.apath[t]*(g.apath[t]<0) for g in gs]) for t in range(T)], dtype=float)
-        self.c = array([sum([g.cpath[t] for g in gs]) for t in range(T)], dtype=float)
+        gn = float(len(gs))
+        self.h = array([sum([g.hpath[y] for g in gs]) for y in range(T)], dtype=float)/gn
+        self.rent = array([sum([g.rpath[y] for g in gs]) for y in range(T)], dtype=float)/gn
+        self.a = array([sum([g.apath[y] for g in gs]) for y in range(T)], dtype=float)/gn
+        self.d = array([sum([-g.apath[y]*(g.apath[y]<0) for g in gs]) for y in range(T)], dtype=float)/gn
+        self.c = array([sum([g.cpath[y] for g in gs]) for y in range(T)], dtype=float)/gn
+        self.l = array([sum([g.epath[y] for g in gs]) for y in range(T)], dtype=float)/gn
 
-        H = sum([self.h[y]*self.pop[-1,y] for y in range(T)])
-        R = sum([self.r[y]*self.pop[-1,y] for y in range(T)])
-        D = sum([self.d[y]*self.pop[-1,y] for y in range(T)])
-        C = sum([self.c[y]*self.pop[-1,y] for y in range(T)])
-        self.Dratio = -D/C
-        return H, R, D, C
-
-
-    def aggregate(self, gs):
-        """Aggregate Capital, Labor in Efficiency unit and Bequest over all cohorts"""
-        W, T, TS = self.W, self.T, self.TS
-        """Aggregate all cohorts' capital and labor supply at each year"""
-        K1, L1, H1, R1 = array([[0 for t in range(TS)] for i in range(4)], dtype=float)
-        for t in range(TS):
-            if t <= TS-T-1:
-                K1[t] = sum([gs[t+y].apath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
-                L1[t] = sum([gs[t+y].epath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
-                H1[t] = sum([gs[t+y].hpath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
-                R1[t] = sum([gs[t+y].rpath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
-                self.D[t] = sum([gs[t+y].apath[-(y+1)]*(gs[t+y].apath[-(y+1)]<0)*self.pop[t,-(y+1)] for y in range(T)])
-                self.Beq[t] = sum([gs[t+y].apath[-(y+1)]*self.pop[t,-(y+1)]
-                                    /self.sp[t,-(y+1)]*(1-self.sp[t,-(y+1)]) for y in range(T)])
-                self.C[t] = sum([gs[t+y].cpath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
-            else:
-                K1[t] = sum([gs[-1].apath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
-                L1[t] = sum([gs[-1].epath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
-                H1[t] = sum([gs[-1].hpath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
-                R1[t] = sum([gs[-1].rpath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
-                self.D[t] = sum([gs[-1].apath[-(y+1)]*(gs[-1].apath[-(y+1)]<0)*self.pop[t,-(y+1)] for y in range(T)])
-                self.Beq[t] = sum([gs[-1].apath[-(y+1)]*self.pop[t,-(y+1)]
-                                    /self.sp[t,-(y+1)]*(1-self.sp[t,-(y+1)]) for y in range(T)])
-                self.C[t] = sum([gs[-1].cpath[-(y+1)]*self.pop[t,-(y+1)] for y in range(T)])
-        self.Converged = (max(absolute(K1-self.K)) < self.tol*max(absolute(self.K)))
-        """ Update the economy's aggregate K and N with weight phi on the old """
-        self.K = self.phi*self.K + (1-self.phi)*K1
-        self.L = self.phi*self.L + (1-self.phi)*L1
-        self.k = self.K/self.L
-        self.Dratio = -self.D/self.C
-        self.Hd = H1
-        self.Rd = R1
-        self.Hd_Hs = self.Hd - self.Hs
-        # print "K=%2.2f," %(self.K[0]),"L=%2.2f," %(self.L[0]),"K/L=%2.2f" %(self.k[0])
+        self.Beq = sum(array([(self.a[y] + self.qh*self.h[y])*self.pop[y]*(1-self.sp[y]) for y in range(T)], dtype=float))
+        self.H = sum([self.h[y]*self.pop[y] for y in range(T)])
+        self.R = sum([self.rent[y]*self.pop[y] for y in range(T)])
+        self.A = sum([self.a[y]*self.pop[y] for y in range(T)])
+        self.D = sum([self.d[y]*self.pop[y] for y in range(T)])
+        self.C = sum([self.c[y]*self.pop[y] for y in range(T)])
+        self.L = sum([self.l[y]*self.pop[y] for y in range(T)])
+        self.DebtRatio = self.D/self.C
+        return self.H, self.R, self.D, self.C, self.DebtRatio, self.Beq
 
 
     def printprices(self):
         """ print market prices and others like tax """
-        for i in range(self.TS/self.T):
-            print "r=%2.2f," %(self.r[i*self.T]*100),"w=%2.2f," %(self.w[i*self.T]),\
-                    "Tr=%2.2f" %(self.Tr[i*self.T]), "b=%2.2f," %(self.b[i*self.T]),\
-                    "qh=%2.2f" %(self.qh[i*self.T]), "qr=%2.2f," %(self.qr[i*self.T])
-            # print "K=%2.2f," %(self.K[i*self.T]),"L=%2.2f," %(self.L[i*self.T]),\
-            #         "K/L=%2.2f" %(self.k[i*self.T]), "HD=%2.2f" %(self.Hd[i*self.T]),\
-            #         "RD=%2.2f" %(self.Rd[i*self.T])
+        print "r=%2.2f," %(self.r*100),"w=%2.2f," %(self.w),"Tr=%2.2f" %(self.Tr), "b=%2.2f," %(self.b),\
+                "qh=%2.2f" %(self.qh), "H=%3.2f," %(self.H),"qh=%2.2f" %(self.qh), "R=%2.2f," %(self.R),\
+                "Debt Ratio=%2.2f" %(self.DebtRatio), "net Asset=%2.2f," %(self.A)
 
 
     def update(self):
         """ Update market prices, w and r, and many others according to new
         aggregate capital and labor paths for years 0,...,TS from last iteration """
-        for t in range(self.TS):
-            self.Pt[t] = sum(self.pop[t])
-            self.Pr[t] = sum([self.pop[t,y] for y in range(self.W,self.T)])
-            self.y[t] = self.k[t]**self.alpha
-            self.r[t] = max(0.01,self.alpha*self.k[t]**(self.alpha-1)-self.delta)
-            self.w[t] = (1-self.alpha)*self.k[t]**self.alpha
-            self.Tax[t] = self.tw[t]*self.w[t]*self.L[t] + self.tr[t]*self.r[t]*self.k[t]*self.L[t]
-            self.G[t] = self.gy[t]*self.y[t]*self.L[t]
-            self.Tr[t] = (self.Tax[t]+self.Beq[t]-self.G[t])/self.Pt[t]
-            self.tb[t] = self.zeta*(1-self.tw[t])*self.Pr[t]/(self.L[t]+self.zeta*self.Pr[t])
-            self.b[t] = self.zeta*(1-self.tw[t]-self.tb[t])*self.w[t]
-            #self.qh[t] = self.qh[t]*(1+0.1*(self.Hd[t]-self.Hs))
-            #self.qr[t] = self.qr[t]*(1+0.1*self.Rd[t])
-        # print "for r=%2.2f," %(self.r[0]*100), "w=%2.2f," %(self.w[0]), \
-        #         "Tr=%2.2f," %(self.Tr[0]), "b=%2.2f," %(self.b[0]), "Beq.=%2.2f," %(self.Beq[0])
+        self.Tax = self.tw*self.w*self.L + self.tr*self.r*(self.A+self.D)
+        self.G = self.gy*self.C
+        self.Tr = (self.Tax+self.Beq-self.G)/self.Pt
+        self.tb = self.zeta*(1-self.tw)*self.Pr/(self.L+self.zeta*self.Pr)
+        self.b = self.zeta*(1-self.tw-self.tb)*self.w
         self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr, self.qh, self.qr])
 
 
@@ -174,7 +132,7 @@ class cohort:
         self.tol, self.neg = tol, neg
         """ house sizes and number of feasible feasible house sizes """
         # self.hh = array([0.0, 0.4, 1.0])
-        self.hh = array([0.0, 1.0])
+        self.hh = array([0.0, 0.4, 1.0])
         # self.hh = loadtxt('hh.txt', delimiter='\n')
         self.sp = loadtxt('sp.txt', delimiter='\n')  # survival probability
         self.hN = hN = len(self.hh)
@@ -229,7 +187,7 @@ class cohort:
             else:
                 xx, nxx, trx = self.xx, self.xx, self.trx
             for x0 in range(len(xx)):
-                income = Tr[y] + b[y] if y >= -self.R else Tr[y] + (1-tw[y]-tb[y])*w[y]*self.ef[y]*xx[x0]
+                income = Tr + b if y >= -self.R else Tr + (1-tw-tb)*w*self.ef[y]*xx[x0]
                 mdti = (aa + income*self.dti >= 0).argmax() # DTI constraint
                 for h0 in range(hN):
                     at = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
@@ -238,7 +196,7 @@ class cohort:
                     vt = array([[self.neg for i in range(aN)] for h in range(hN)], dtype=float)
                     # print self.apath
                     for h1 in range(hN):
-                        mltv = (aa + self.ltv*qh[y]*hh[h1] >= 0).argmax() # LTV constraint
+                        mltv = (aa + self.ltv*qh*hh[h1] >= 0).argmax() # LTV constraint
                         m0 = max(0,mltv,mdti)
                         for i in range(aN):    # l = 0, 1, ..., 50
                             # Find a bracket within which optimal a' lies
@@ -273,7 +231,7 @@ class cohort:
                         print '------------'
                         print 'y=',y,'inc=%2.2f'%(income),'h0=',h0
                         for i in ai:
-                            print 'ltv=%2.2f'%(hh[self.ho[y,x0,h0,i]]*qh[y]*self.ltv),'dti=%2.2f'%(income*self.dti),\
+                            print 'ltv=%2.2f'%(hh[self.ho[y,x0,h0,i]]*qh*self.ltv),'dti=%2.2f'%(income*self.dti),\
                                     'a0=%2.2f'%(aa[i]),'h1=%2.0f'%(self.ho[y,x0,h0,i]),\
                                     'a1=%2.2f'%(self.ao[y,x0,h0,i]),\
                                     'c0=%2.2f'%(self.co[y,x0,h0,i]),'r0=%2.2f'%(self.ro[y,x0,h0,i])
@@ -370,12 +328,12 @@ class cohort:
         """ FIND budget, consumption and rent given next period house and asset """
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
 
-        income = b[y] + Tr[y] if y >= -self.R else (1-tw[y]-tb[y])*w[y]*self.ef[y]*self.xx[x0] + Tr[y]
+        income = b + Tr if y >= -self.R else (1-tw-tb)*w*self.ef[y]*self.xx[x0] + Tr
 
-        di = a0*(1+(1-tr[y])*r[y]) + (self.hh[h0]-self.hh[h1])*qh[y] \
-                - self.hh[h0]*qh[y]*(h0!=h1)*self.tcost - a1 + income
-        co = (di + qr[y]*(self.hh[h0]+self.gamma))/(1+self.psi)
-        ro = (di*self.psi-qr[y]*(self.hh[h0]+self.gamma))/((1+self.psi)*qr[y])
+        di = a0*(1+(1-tr)*r*(a0>0)) + (self.hh[h0]-self.hh[h1])*qh \
+                - self.hh[h0]*qh*(h0!=h1)*self.tcost - a1 + income
+        co = (di + qr*(self.hh[h0]+self.gamma))/(1+self.psi)
+        ro = (di*self.psi-qr*(self.hh[h0]+self.gamma))/((1+self.psi)*qr)
         return di, co, ro
 
 
@@ -434,14 +392,14 @@ class agent:
         # the oldest generation's consumption and labor supply
         di, self.cpath[T-1], self.rpath[T-1] = g.findcr(-1, 0, self.hpath[-1], 0, self.apath[-1], 0, p)
         self.upath[T-1] = g.util(self.cpath[T-1], self.rpath[T-1]+hh[self.hpath[T-1]])
-        self.epath = g.ef[-self.T:]
+        self.epath = [g.ef[y]*g.xx[self.xpath[y]] for y in range(T)]
 
 
 
 def spath(e, g):
-    title = 'qh=' + str(e.qh[-1]) + 'qr=' + str(e.qr[-1]) \
-                    + 'Hd=%2.2f'%(e.Hd[-1]) + 'Rd=%2.2f'%(e.Rd[-1]) + 'ltv=' \
-                    + str(g.ltv) + 'dti=' + str(g.dti) + 'Debt=%2.2f'%(e.Dratio[-1]) + '.png'
+    title = 'qh=' + str(e.qh) + 'qr=' + str(e.qr) \
+                    + 'Hd=%2.2f'%(e.H) + 'Rd=%2.2f'%(e.R) + 'ltv=' \
+                    + str(g.ltv) + 'dti=' + str(g.dti) + 'Debt=%2.2f'%(e.DebtRatio[-1]) + '.png'
     fig = plt.figure(facecolor='white')
     ax = fig.add_subplot(111)
     ax1 = fig.add_subplot(221)
@@ -470,7 +428,38 @@ def spath(e, g):
     plt.show()
     # time.sleep(1)
     # plt.close() # plt.close("all")
-    
+
+def agentpath(e, g, a):
+    fig = plt.figure(facecolor='white')
+    ax = fig.add_subplot(111)
+    ax1 = fig.add_subplot(231)
+    ax2 = fig.add_subplot(232)
+    ax3 = fig.add_subplot(233)
+    ax4 = fig.add_subplot(234)
+    ax5 = fig.add_subplot(235)
+    ax6 = fig.add_subplot(236)
+    fig.subplots_adjust(hspace=.5, wspace=.3, left=None, right=None, top=None, bottom=None)
+    ax.spines['top'].set_color('none')
+    ax.spines['bottom'].set_color('none')
+    ax.spines['left'].set_color('none')
+    ax.spines['right'].set_color('none')
+    ax.tick_params(labelcolor='w', top='off', bottom='off', left='off', right='off')
+    ax1.plot(a.apath)
+    ax2.plot(g.hh[a.hpath])
+    ax3.plot(a.cpath)
+    ax4.plot(a.rpath)
+    ax5.plot(a.xpath)
+    ax6.plot(a.upath)
+    ax.set_xlabel('Age')
+    ax1.set_title('Liquid Asset')
+    ax2.set_title('House')
+    ax3.set_title('Consumption')
+    ax4.set_title('Rent')
+    ax5.set_title('Productivity')
+    ax6.set_title('Period Util.')
+    plt.show()
+    # time.sleep(1)
+    # plt.close() # plt.close("all")    
 
 # def main1(psi=0.1, qh=1.050, qr=0.04145, ltv=0.4, dti=1.2, tcost=0.05):
 #     e = state(TG=1, k=4.2, ng=1, dng=0, W=45, R=30, Hs=60, qh=qh, qr=qr)
@@ -485,7 +474,7 @@ def spath(e, g):
 #     return e.Hd_Hs[-1], e.Rd[-1], e.r[-1], e.Dratio[-1]
 
 if __name__ == '__main__':
-    e = state(TG=1, k=4.2, ng=1, dng=0, W=45, R=30, Hs=60, qh=1.15, qr=0.0450)
+    e = state(TG=1, k=4.2, W=45, R=30, Hs=60, qh=1.15, qr=0.0450)
     e.printprices()
     g = cohort(W=45, R=30, psi=0.1, beta=0.96, tcost=0.05, gamma=0.99, aL=-1.0, aH=2.0, aN=301, ltv=0.6, dti=2.0)
     g.valueNpolicy(e.p)
