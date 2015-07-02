@@ -336,8 +336,8 @@ class cohort:
                 budget = a0*(1+(1-tr[y])*r[y]) + (hh[h0]-hh[h1])*qh[y] \
                             - hh[h0]*qh[y]*(hh[h0]!=hh[h1])*self.tcost + Tr[y] - a1 \
                             + (1-tw[y]-tb[y])*w[y]*self.ef[y]
-            co = (budget+qr[y]*(hh[h0]+10))/(1+self.psi)
-            ro = (budget*self.psi-qr[y]*(hh[h0]+10))/((1+self.psi)*qh[-1])
+            co = (budget+qr[y]*(hh[h0]+self.gamma))/(1+self.psi)
+            ro = (budget*self.psi-qr[y]*(hh[h0]+self.gamma))/((1+self.psi)*qh[-1])
             if co <= 0:
                 pass
             else:

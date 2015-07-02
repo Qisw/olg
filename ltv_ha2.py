@@ -162,16 +162,15 @@ class cohort:
         self.v = array([[[0 for i in range(aN)] for h in range(self.hN)] for y in range(T)], dtype=float)
         self.vtilde = [[[] for h in range(self.hN)] for y in range(T)]
         """ policy functions used in value function method """
-        self.na = [[[0 for i in range(2)] for h in range(self.hN)] for y in range(T)]
         self.ao = array([[[0 for i in range(aN)] for h in range(self.hN)] for y in range(T)], dtype=float)
-        self.ho = array([[[0 for i in range(aN)] for h in range(self.hN)] for y in range(T)], dtype=float)
+        self.ho = array([[[0 for i in range(aN)] for h in range(self.hN)] for y in range(T)], dtype=int)
         self.co = array([[[0 for i in range(aN)] for h in range(self.hN)] for y in range(T)], dtype=float)
         self.ro = array([[[0 for i in range(aN)] for h in range(self.hN)] for y in range(T)], dtype=float)
         """ the following paths for a, c, n and u are used in direct and value function methods
         In direct method, those paths are directly calculated, while in the value function
         method the paths are calculated from value and policy functions """
         self.apath = array([a0 for y in range(T)], dtype=float)
-        self.hpath = array([0 for y in range(T)], dtype=float)
+        self.hpath = array([0 for y in range(T)], dtype=int)
         self.cpath = array([0 for y in range(T)], dtype=float)
         self.rpath = array([0 for y in range(T)], dtype=float)
         self.spath = array([0 for y in range(T)], dtype=float)
@@ -186,32 +185,27 @@ class cohort:
         T, aa, hh, aN, hN = self.T, self.aa, self.hh, self.aN, self.hN
         psi, tcost, beta, gamma, sp = self.psi, self.tcost, self.beta, self.gamma, self.sp
         # y = -1 : the oldest generation
-        for h in range(self.hN):
+        for h0 in range(self.hN):
             for i in range(self.aN):
-                budget = aa[i]*(1+(1-tr[-1])*r[-1]) + hh[h]*qh[-1]*(1-tcost) + b[-1] + Tr[-1]
-                self.co[-1,h,i] = (budget+qr[-1]*(hh[h]+gamma))/(1+psi)
-                self.ro[-1,h,i] = (budget*psi-qr[-1]*(hh[h]+gamma))/((1+psi)*qr[-1])
-                self.v[-1,h,i] = self.util(self.co[-1,h,i], self.ro[-1,h,i]+hh[h])
-                # print 'h=',h,'a=',aa[i],'budget=%2.2f'%(budget), 'c=%2.2f'%(self.co[-1,h,i]), \
-                # 'r=%2.2f'%(self.ro[-1,h,i]),'v=%2.2f'%(self.v[-1,h,i])
-            self.vtilde[-1][h] = interp1d(aa, self.v[-1,h], kind='cubic')
-
+                cash = self.budget(-1, h0, 0, aa[i], 0, p)
+                self.co[-1,h0,i] = (cash+qr[-1]*(hh[h0]+gamma))/(1+psi)
+                self.ro[-1,h0,i] = (cash*psi-qr[-1]*(hh[h0]+gamma))/((1+psi)*qr[-1])
+                self.v[-1,h0,i] = self.util(self.co[-1,h0,i], self.ro[-1,h0,i]+hh[h0])
+            self.vtilde[-1][h0] = interp1d(aa, self.v[-1,h0], kind='cubic')
         # y = -2, -3,..., -60
         for y in range(-2, -(T+1), -1):
             income = Tr[y] + b[y] if y >= -self.R else Tr[y] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
             mdti = (aa + income*self.dti >= 0).argmax() # DTI constraint
             # print 'dit',income*0.3,mdti,aa[mdti]
             for h0 in range(self.hN):
-                at = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
-                ct = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
-                rt = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
-                vt = array([[float('-inf') for i in range(aN)] for h in range(hN)], dtype=float)
-                casht = array([[0 for i in range(aN)] for h in range(hN)], dtype=float)
+                at = array([[0 for i in range(aN)] for h1 in range(hN)], dtype=float)
+                ct = array([[0 for i in range(aN)] for h1 in range(hN)], dtype=float)
+                rt = array([[0 for i in range(aN)] for h1 in range(hN)], dtype=float)
+                vt = array([[float('-inf') for i in range(aN)] for h1 in range(hN)], dtype=float)
+                casht = array([[0 for i in range(aN)] for h1 in range(hN)], dtype=float)
                 # print self.apath
                 for h1 in range(self.hN):
                     mltv = (aa + self.ltv*qh[y]*hh[h1] >= 0).argmax() # LTV constraint
-                    # print (aa + self.ltv*qh[y]*hh[h1] > 0)
-                    # print m0
                     m0 = max(0,mltv,mdti)
                     # m0 = 0
                     for i in range(self.aN):    # l = 0, 1, ..., 50
@@ -219,10 +213,6 @@ class cohort:
                         m = max(0, m0)  # Rch91v.g uses m = max(0, m0-1)
                         # print m
                         m0, a0, b0, c0 = self.GetBracket(y, h0, h1, i, m, p)
-                        # a0, b0, c0 = self.GetBracket2(y, h0, h1, i, p)
-                        # print y, h0, h1, i, m0, a0, b0, c0
-                        # Find optimal a' using Golden Section Search
-                        # print 'a=',self.aa[i],'bracket=','(',a0,',',c0,')'
                         if a0 == b0:
                             at[h1,i] = aa[m0]
                         elif b0 == c0:
@@ -233,7 +223,6 @@ class cohort:
                                 return -self.findv(y, h0, h1, aa[i], a1, p)
                             result = minimize_scalar(objfn, bracket=(a0,b0,c0), method='Golden')
                             at[h1,i] = result.x
-                        # print y, h0, h1, i, m0, a0, b0, c0, 'a1=',at[h1,i]
                         # Compute consumption, rent and house
                         casht[h1,i] = self.budget(y,h0,h1,aa[i],at[h1,i],p)
                         ct[h1,i] = (casht[h1,i]+qr[y]*(hh[h0]+gamma))/(1+psi)
@@ -255,47 +244,39 @@ class cohort:
                     print '------------'
                     print 'y=',y,'inc=%2.2f'%(income),'h0=',h0
                     for i in ai:
-                        print 'ltv=%2.2f'%(hh[int(self.ho[y,h0,i])]*qh[y]*self.ltv),'dti=%2.2f'%(income*self.dti),\
+                        print 'ltv=%2.2f'%(hh[self.ho[y,h0,i]]*qh[y]*self.ltv),'dti=%2.2f'%(income*self.dti),\
                                 'a0=%2.2f'%(aa[i]),'h1=%2.0f'%(self.ho[y,h0,i]),\
                                 'a1=%2.2f'%(self.ao[y,h0,i]),\
                                 'c0=%2.2f'%(self.co[y,h0,i]),'r0=%2.2f'%(self.ro[y,h0,i])
-                              # 'budget=%2.2f' %(cash),'c=%2.2f' %(self.co[y,h0,i]),'r=%2.2f' %(self.ro[y,h0,i])
-                        # print '------','v1(0,a1)=%2.2f' %(beta*self.vtilde[y+1][0](self.ao[y,h,i])),\
-                        #       'v1(1,a1)=%2.2f' %(beta*self.vtilde[y+1][1](self.ao[y,h,i])),\
-                        #       'v1(2,a1)=%2.2f' %(beta*self.vtilde[y+1][2](self.ao[y,h,i]))
-
                 self.vtilde[y][h0] = interp1d(aa, self.v[y,h0], kind='cubic')
-            # if (y == -50):
-            #     break
+
+
+    def lifecycle(self, p, hinit=0, ainit=0):
         """ find asset and labor supply profiles over life-cycle from value function"""
+        [r, w, b, tr, tw, tb, Tr, qh, qr] = p
+        T, aa, hh, aN, hN = self.T, self.aa, self.hh, self.aN, self.hN
+        self.apath[0], self.hpath[0] = ainit, hinit
         # generate each generation's asset, consumption and labor supply forward
         for y in range(T-1):    # y = 0, 1,..., 58
             self.apath[y+1] = self.clip(interp1d(aa, self.ao[y,self.hpath[y]], kind='cubic')(self.apath[y]))
             v0 = self.neg
             for h1 in range(self.hN):
-                if y >= T-self.R:    # y = -2, -3, ..., -60
-                    budget = self.apath[y]*(1+(1-tr[y])*r[y]) + (self.hpath[y]-hh[h1])*qh[y] \
-                                - self.hpath[y]*qh[y]*(self.hpath[y]!=hh[h1])*tcost \
-                                + b[y] + Tr[y] - self.apath[y+1]
-                else:
-                    budget = self.apath[y]*(1+(1-tr[y])*r[y]) + (self.hpath[y]-hh[h1])*qh[y] \
-                                - self.hpath[y]*qh[y]*(self.hpath[y]!=hh[h1])*tcost \
-                                + Tr[y] - self.apath[y+1] + (1-tw[y]-tb[y])*w[y]*self.ef[y]
-                c1 = (budget+qr[y]*(self.hpath[y]+gamma))/(1+psi)
-                r1 = (budget*psi-qr[y]*(self.hpath[y]+gamma))/((1+psi)*qr[y])
+                cash = self.budget(y-T, self.hpath[y], h1, self.apath[y], self.apath[y+1], p)
+                c1 = (cash+qr[y]*(hh[self.hpath[y]]+self.gamma))/(1+self.psi)
+                r1 = (cash*self.psi-qr[y]*(hh[self.hpath[y]]+self.gamma))/((1+self.psi)*qr[y])
                 if c1 <= 0:
                     pass
                 else:
-                    v1 = self.util(c1, r1+self.hpath[y]) + beta*self.vtilde[y+1][h1](self.apath[y+1])
+                    v1 = self.util(c1, r1+hh[self.hpath[y]]) + self.beta*self.sp[y]*self.vtilde[y+1][h1](self.apath[y+1])
                     if v1 >= v0:
-                        v0, self.cpath[y], self.rpath[y], self.hpath[y+1], self.spath[y] = v1, c1, r1, hh[h1], r1+self.hpath[y]
+                        v0, self.cpath[y], self.rpath[y], self.hpath[y+1], self.spath[y] = v1, c1, r1, h1, r1+hh[self.hpath[y]]
             self.upath[y] = self.util(self.cpath[y], self.spath[y])
         # the oldest generation's consumption and labor supply
-        budget = (1+(1-tr[T-1])*r[T-1])*self.apath[T-1] + b[T-1] + Tr[T-1] + self.hpath[T-1]*qh[T-1]*(1-self.tcost)
-        self.cpath[T-1] = (budget+qr[T-1]*(self.hpath[T-1]+gamma))/(1+psi)
-        self.rpath[T-1] = (budget*psi-qr[T-1]*(self.hpath[T-1]+gamma))/((1+psi)*qh[T-1])
+        cash = self.budget(-1, self.hpath[T-1], 0, self.apath[T-1], 0, p)
+        self.cpath[T-1] = (cash+qr[T-1]*(hh[self.hpath[T-1]]+self.gamma))/(1+self.psi)
+        self.rpath[T-1] = (cash*self.psi-qr[T-1]*(hh[self.hpath[T-1]]+self.gamma))/((1+self.psi)*qh[T-1])
         self.spath[T-1] = self.rpath[T-1]
-        self.upath[T-1] = self.util(self.cpath[T-1], self.rpath[T-1]+self.hpath[T-1])
+        self.upath[T-1] = self.util(self.cpath[T-1], self.rpath[T-1]+hh[self.hpath[T-1]])
         self.epath = self.ef[-self.T:]
 
 
@@ -305,14 +286,11 @@ class cohort:
         aa = self.aa
         # print aa
         a, b, c = aa[0], 2*aa[0]-aa[1], 2*aa[0]-aa[2]
-        # print 'abc=',a,b,c
         minit = m
         m0 = m
         v0 = float('-inf')
         while (a > b) or (b > c):
             v1 = self.findv(y, h0, h1, aa[l], aa[m], p)
-            # print y,l,m,'v0=%2.2f'%(v0),'v1=%2.2f'%(v1),a,b,c
-            # print v1
             if v1 > v0:
                 a, b, = ([aa[m], aa[m]] if m == minit else [aa[m-1], aa[m]])
                 v0, m0 = v1, m
@@ -330,30 +308,33 @@ class cohort:
         next period asset a1, current period consumption c and labor n
         a1 is always within aL and aH """
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
-        T, aa, hh, aN, hN = self.T, self.aa, self.hh, self.aN, self.hN
-        psi, tcost, beta, gamma, sp = self.psi, self.tcost, self.beta, self.gamma, self.sp
+        hh = self.hh
 
         cash = self.budget(y, h0, h1, a0, a1, p)
-        if cash + qr[y]*(hh[h0]+gamma) > 0:
-            co = (cash+qr[y]*(hh[h0]+gamma))/(1+psi)
-            ro = (cash*psi-qr[y]*(hh[h0]+gamma))/((1+psi)*qr[y])
-            v = self.util(co, ro+hh[h0]) + beta*sp[y]*self.vtilde[y+1][h1](a1)
+        if cash + qr[y]*(hh[h0]+self.gamma) > 0:
+            co = (cash+qr[y]*(hh[h0]+self.gamma))/(1+self.psi)
+            ro = (cash*self.psi-qr[y]*(hh[h0]+self.gamma))/((1+self.psi)*qr[y])
+            value = self.util(co, ro+hh[h0]) + self.beta*self.sp[y]*self.vtilde[y+1][h1](a1)
         else:
-            v = self.neg #float('-inf')
-        return v
+            value = self.neg #float('-inf')
+        return value
 
 
-    def budget(self,y,h0,h1,a0,a1,p):
+    def budget(self, y, h0, h1, a0, a1, p):
         """ budget for consumption and rent given next period house and asset """
         [r, w, b, tr, tw, tb, Tr, qh, qr] = p
         hh = self.hh
-        if y >= -self.R:    # y = -2, -3, ..., -60
+        if y >= -self.R and y < -1:    # y = -2, -3, ..., -60
             # print y, h0, h1, tr[y], r[y], hh[h0], hh[h1], qh[y], b[y], Tr[y]
-            b = a0*(1+(1-tr[y])*r[y]) + (hh[h0]-hh[h1])*qh[y] - hh[h0]*qh[y]*(h0!=h1)*self.tcost + b[y] + Tr[y] - a1
+            cash = a0*(1+(1-tr[y])*r[y]) + (hh[h0]-hh[h1])*qh[y] \
+                    - hh[h0]*qh[y]*(h0!=h1)*self.tcost + b[y] + Tr[y] - a1
+        elif y == -1:    # y = -2, -3, ..., -60
+            cash = a0*(1+(1-tr[y])*r[y]) + hh[h0]*qh[y]*(1-self.tcost) + b[y] + Tr[y]
         else:
-            b = a0*(1+(1-tr[y])*r[y]) + (hh[h0]-hh[h1])*qh[y] - hh[h0]*qh[y]*(h0!=h1)*self.tcost \
+            cash = a0*(1+(1-tr[y])*r[y]) + (hh[h0]-hh[h1])*qh[y] \
+                    - hh[h0]*qh[y]*(h0!=h1)*self.tcost \
                     + Tr[y] + (1-tw[y]-tb[y])*w[y]*self.ef[y] - a1
-        return b
+        return cash
 
 
     def clip(self, a):
@@ -393,17 +374,18 @@ def spath(e, g):
     ax2.set_title('House')
     ax3.set_title('Consumption')
     ax4.set_title('Rent')
-    # plt.show()
+    plt.show()
     fig.savefig(title)
     # time.sleep(1)
     # plt.close() # plt.close("all")
     
 
 def main1(psi=0.1, qh=1.3, qr=0.05, ltv=0.6, dti=1.2, tcost=0.04):
-    e = state(TG=1, ng=1, dng=0, W=45, R=30, Hs=10, qh=qh, qr=qr)
+    e = state(TG=1, ng=1, dng=0, Hs=10, qh=qh, qr=qr)
     e.printprices()
-    g = cohort(W=45, R=30, psi=psi, beta=0.96, tcost=tcost, gamma=1, aL=-1.0, aH=1.0, aN=501, ltv=ltv, dti=dti)
+    g = cohort(psi=psi, beta=0.96, tcost=tcost, gamma=1, aL=-1.0, aH=1.0, aN=501, ltv=ltv, dti=dti)
     g.findvpath(e.p)
+    g.lifecycle(e.p)
     e.aggregate([g])
     e.update()
     e.printprices()
@@ -412,17 +394,17 @@ def main1(psi=0.1, qh=1.3, qr=0.05, ltv=0.6, dti=1.2, tcost=0.04):
 
 
 if __name__ == '__main__':
-    qhN = qrN = 5
-    ltvN = 4
-    qh = linspace(1,2,qhN)
-    qr = linspace(0.2,0.8,qrN)
-    ltv = linspace(0.4,1.0,ltvN)
-    House = array([[[0 for i in range(qrN)] for j in range(qhN)] for p in range(ltvN)])
-    Rent = array([[[0 for i in range(qrN)] for j in range(qhN)] for p in range(ltvN)])
-    Rate = array([[[0 for i in range(qrN)] for j in range(qhN)] for p in range(ltvN)])
-    for p in range(ltvN):
-        for i in range(qhN):
-            for j in range(qrN):
-                House[p,i,j], Rent[p,i,j], Rate[p,i,j] = main1(psi=0.1, qh=qh[i], qr=qr[j], ltv=ltv[p], dti=2.0, tcost=0.05)
-    with open('hrr.pickle','wb') as f:
-    pickle.dump([House, Rent, Rate], f)
+    main1(psi=0.1, qh=1.3, qr=0.05, ltv=1.2, dti=2.0, tcost=0.05)
+
+
+    # qhN = qrN = 5
+    # qh = linspace(1,2,qhN)
+    # qr = linspace(0.02,0.08,qrN)
+    # House = array([[0 for i in range(qrN)] for j in range(qhN)])
+    # Rent = array([[0 for i in range(qrN)] for j in range(qhN)])
+    # Rate = array([[0 for i in range(qrN)] for j in range(qhN)])
+    # for i in range(qhN):
+    #     for j in range(qrN):
+    #         House[i,j], Rent[i,j], Rate[i,j] = main1(psi=0.1, qh=qh[i], qr=qr[j], ltv=0.6, dti=2.0, tcost=0.05)
+    # with open('hrr.pickle','wb') as f:
+    #     pickle.dump([House, Rent, Rate], f)

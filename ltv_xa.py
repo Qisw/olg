@@ -24,7 +24,7 @@ class state:
     an economy in which one or multiple generations live """
     def __init__(self, alpha=0.3, delta=0.08, phi=0.8, tol=0.01, Hs = 60,
         tr = 0.15, tw = 0.24, zeta=0.35, gy = 0.195, qh = 10, qr = 0.3,
-        k=3.5, l=0.3, TG=4, W=45, R=30):
+        k=3.5, l=0.3, TG=4, W=45, R=30, Tr=0.06, b=0.26):
         # tr = 0.429, tw = 0.248, zeta=0.5, gy = 0.195, in Section 9.3. in Heer/Maussner
         # tr = 0.01, tw = 0.11, zeta=0.15, gy = 0.195, qh = 0.1, qr = 0.09,
         """tr, tw and tb are tax rates on capital return, wage and tax for pension.
@@ -70,11 +70,11 @@ class state:
         self.r = r = (alpha)*k**(alpha-1) - delta
         self.w = w = (1-alpha)*k**alpha
         self.tb = tb = zeta*(1-tw)*Pr/(L+zeta*Pr)
-        self.b = 0.25 #zeta*(1-tw-tb)*w
+        self.b = b #zeta*(1-tw-tb)*w
         
         self.Tax = Tax = 11.0
         self.G = G = 6.72
-        self.Tr = 0.06
+        self.Tr = Tr
         self.qh = qh
         self.qr = qr
         # container for r, w, b, tr, tw, tb, Tr
@@ -107,9 +107,9 @@ class state:
     def currentstate(self):
         """ print market prices and others like tax """
         print "r=%2.2f," %(self.r*100),"w=%2.2f" %(self.w),'\n',\
-                "Bequest=%2.2f" %(self.Beq), "Tr=%2.2f" %(self.Tr),\
-                "b=%2.2f" %(self.b),'\n',"qh=%2.4f" %(self.qh),\
-                "H=%3.2f," %(self.H),'\n',"qr=%2.4f" %(self.qr),\
+                "Bequest=%2.2f" %(self.Beq), "Tr=%2.2f" %(self.Tr),"tb=%2.2f" %(self.tb),\
+                "b=%2.2f" %(self.b),'\n',"qh=%2.5f" %(self.qh),\
+                "H=%3.2f," %(self.H),'\n',"qr=%2.5f" %(self.qr),\
                 "R=%2.2f" %(self.R),'\n',"Debt=%2.2f" %(self.D), "Cons=%2.2f" %(self.C),\
                 "Debt Ratio=%2.2f" %(self.DebtRatio), "Liquid Asset=%2.2f" %(self.A)
 
@@ -378,40 +378,6 @@ class agent:
         self.ppath = [self.apath[y] + e.qh*g.hh[self.hpath[[y]]] for y in range(T)]
 
 
-
-def spath(e, g):
-    title = 'qh=' + str(e.qh) + 'qr=' + str(e.qr) \
-                    + 'Hd=%2.2f'%(e.H) + 'Rd=%2.2f'%(e.R) + 'ltv=' \
-                    + str(g.ltv) + 'dti=' + str(g.dti) + 'Debt=%2.2f'%(e.DebtRatio[-1]) + '.png'
-    fig = plt.figure(facecolor='white')
-    ax = fig.add_subplot(111)
-    ax1 = fig.add_subplot(221)
-    ax2 = fig.add_subplot(222)
-    ax3 = fig.add_subplot(223)
-    ax4 = fig.add_subplot(224)
-    fig.subplots_adjust(hspace=.5, wspace=.3, left=None, right=None, top=None, bottom=None)
-    ax.spines['top'].set_color('none')
-    ax.spines['bottom'].set_color('none')
-    ax.spines['left'].set_color('none')
-    ax.spines['right'].set_color('none')
-    ax.tick_params(labelcolor='w', top='off', bottom='off', left='off', right='off')
-    ax1.plot(g.apath)
-    ax2.plot(g.hh[g.hpath])
-    ax3.plot(g.cpath)
-    ax4.plot(g.rpath)
-    ax.set_xlabel('Age')
-    ax.set_title(title, y=1.08)
-    ax1.set_title('Liquid Asset')
-    ax2.set_title('House')
-    ax3.set_title('Consumption')
-    ax4.set_title('Rent')
-    path = 'D:\LTV\olg2'
-    fullpath = os.path.join(path, title)
-    fig.savefig(fullpath)
-    plt.show()
-    # time.sleep(1)
-    # plt.close() # plt.close("all")
-
 def agentpath(e, g, a):
     fig = plt.figure(facecolor='white')
     ax = fig.add_subplot(111)
@@ -440,14 +406,14 @@ def agentpath(e, g, a):
     ax5.set_title('Rent')
     ax6.set_title('Productivity')
     ax3.set_title('Total Asset')
+    ax4.axis([0, 80, 0, 1.1])
     plt.show()
     # time.sleep(1)
     # plt.close() # plt.close("all")    
 
 def agepath(e, g):
-    title = 'qh=' + str(e.qh) + 'qr=' + str(e.qr) \
-                + 'H=%2.2f'%(e.H) + 'R=%2.2f'%(e.R) + 'i=%2.2f'%(e.r) + 'ltv=' \
-                + str(g.ltv) + 'Debt=%2.2f'%(e.DebtRatio) + '.png'
+    title = 'i=%2.2f'%(e.r*100) + 'ltv=' + str(g.ltv) + 'qh=' + str(e.qh) + 'qr=' + str(e.qr) \
+                + 'H=%2.2f'%(e.H) + 'R=%2.2f'%(e.R) +  'Debt=%2.2f'%(e.DebtRatio) + '.png'
     fig = plt.figure(facecolor='white')
     ax = fig.add_subplot(111)
     ax1 = fig.add_subplot(231)
@@ -497,12 +463,12 @@ def agepath(e, g):
 #     return e.Hd_Hs[-1], e.Rd[-1], e.r[-1], e.Dratio[-1]
 
 if __name__ == '__main__':
-    e = state(TG=1, k=4.2, W=45, R=30, Hs=60, qh=0.950, qr=0.041)
+    e = state(TG=1, k=4.2, W=45, R=30, Hs=60, qh=1.05910, qr=0.04041, Tr=0.06, b=0.26)
     e.currentstate()
-    g = cohort(W=45, R=30, psi=0.1, beta=0.96, tcost=0.05, gamma=0.99, aL=-1.0, aH=1.0, aN=101, ltv=0.6, dti=2.0)
+    g = cohort(W=45, R=30, psi=0.1, beta=0.96, tcost=0.05, gamma=0.99, aL=-1.0, aH=0.5, aN=251, ltv=0.8, dti=2.0)
     g.valueNpolicy(e.p)
     print 'simulation starts...'
-    agents = [agent(g) for i in range(500)]
+    agents = [agent(g) for i in range(5000)]
     for a in agents:
         a.simulatelife(e, g, xinit=random.binomial(1,0.04))
     e.sum(agents)
@@ -513,16 +479,16 @@ if __name__ == '__main__':
     # e.printprices()
     # spath(e, g)
 
-def gridsearch():
-    qhN = qrN = 5
-    qh = linspace(0.98,1.20,qhN)
-    qr = linspace(0.039,0.042,qrN)
-    House = array([[0 for i in range(qrN)] for j in range(qhN)])
-    Rent = array([[0 for i in range(qrN)] for j in range(qhN)])
-    Rate = array([[0 for i in range(qrN)] for j in range(qhN)])
-    Dr = array([[0 for i in range(qrN)] for j in range(qhN)])
-    for i in range(qhN):
-        for j in range(qrN):
-            House[i,j], Rent[i,j], Rate[i,j], Dr[i,j] = main1(psi=0.1, qh=qh[i], qr=qr[j], ltv=1.0, dti=1.2, tcost=0.05)
-    with open('hrr10.pickle','wb') as f:
-        pickle.dump([House, Rent, Rate, Dr], f)
+# def gridsearch():
+#     qhN = qrN = 5
+#     qh = linspace(0.98,1.20,qhN)
+#     qr = linspace(0.039,0.042,qrN)
+#     House = array([[0 for i in range(qrN)] for j in range(qhN)])
+#     Rent = array([[0 for i in range(qrN)] for j in range(qhN)])
+#     Rate = array([[0 for i in range(qrN)] for j in range(qhN)])
+#     Dr = array([[0 for i in range(qrN)] for j in range(qhN)])
+#     for i in range(qhN):
+#         for j in range(qrN):
+#             House[i,j], Rent[i,j], Rate[i,j], Dr[i,j] = main1(psi=0.1, qh=qh[i], qr=qr[j], ltv=1.0, dti=1.2, tcost=0.05)
+#     with open('hrr10.pickle','wb') as f:
+#         pickle.dump([House, Rent, Rate, Dr], f)

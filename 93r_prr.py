@@ -301,7 +301,6 @@ def transition_sub1(g,T,TS,Et,a1,e1):
         g.apath, g.epath = a1, e1
 
 
-
 def transition(N=15,beta=0.96):
     with open('E.pickle','rb') as f:
         [E0, E1, Et, it] = pickle.load(f)
@@ -327,14 +326,14 @@ def transition(N=15,beta=0.96):
                     p.join()
                 print 'transition('+str(n)+') is progressing : {}'.format(datetime.now())
                 jobs=[]
-#            start_time_gs = datetime.now()
-#            if (g.y >= T-1) and (g.y <= TS-(T+1)):
-#                g.findvpath(Et.p[:,g.y-T+1:g.y+1])
-#            elif (g.y < T-1):
-#                g.findvpath(Et.p[:,:g.y+1])
-#            else:
-#                g.apath, g.epath = a1, e1
-#            print('transition gs loop: {}'.format(datetime.now() - start_time_gs))
+                #            start_time_gs = datetime.now()
+                #            if (g.y >= T-1) and (g.y <= TS-(T+1)):
+                #                g.findvpath(Et.p[:,g.y-T+1:g.y+1])
+                #            elif (g.y < T-1):
+                #                g.findvpath(Et.p[:,:g.y+1])
+                #            else:
+                #                g.apath, g.epath = a1, e1
+                #            print('transition gs loop: {}'.format(datetime.now() - start_time_gs))
         if len(jobs) > 0:
             for p in jobs:
                 p.join()

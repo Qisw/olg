@@ -39,7 +39,8 @@ class state:
         self.TS = TS = (W+R)*TG
         self.sp = sp = loadtxt('sp.txt', delimiter='\n')  # survival probability
         self.pop = array([prod(sp[:t+1]) for t in range(T)], dtype=float)
-        """Construct containers for market prices, tax rates, transfers, other aggregate variables"""
+        """Construct containers for market prices, tax rates, transfers, 
+        other aggregate variables"""
         self.Pt = Pt = sum(self.pop)
         self.Pr = Pr = sum([self.pop[y] for y in range(W,T)])
         self.tr = tr
@@ -51,19 +52,20 @@ class state:
         self.rent = array([0 for y in range(T)], dtype=float)
         self.a = array([0 for y in range(T)], dtype=float)
         self.d = array([0 for y in range(T)], dtype=float)
+        self.ah = array([0 for y in range(T)], dtype=float)
         self.c = array([0 for y in range(T)], dtype=float)
         self.l = array([0 for y in range(T)], dtype=float)
         self.beq = array([0 for y in range(T)], dtype=float)
         self.H = 0
         self.R = 0
         self.A = 0
+        self.AH = 0
         self.D = 0
         self.C = 0
         self.DebtRatio = 0
         
         self.K = K = k*L
         self.Beq = Beq = 0.28
-        # self.Beq = Beq = array([K[t]/Pt[t]*sum((1-self.sp[t])*self.pop[t]) for t in range(TS)], dtype=float)
         self.y = y = k**alpha
         self.r = r = (alpha)*k**(alpha-1) - delta
         self.w = w = (1-alpha)*k**alpha
@@ -76,18 +78,20 @@ class state:
         self.qh = qh
         self.qr = qr
         # container for r, w, b, tr, tw, tb, Tr
-        self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr, self.qh, self.qr])
+        self.p = array([self.r, self.w, self.b, self.tr, self.tw, 
+                            self.tb, self.Tr, self.qh, self.qr])
 
 
     def sum(self, gs):
         T = self.T
         gn = float(len(gs))
-        self.h = array([sum([g.hpath[y] for g in gs]) for y in range(T)], dtype=float)/gn
+        self.h = array([sum([g.hh[g.hpath[y]] for g in gs]) for y in range(T)], dtype=float)/gn
         self.rent = array([sum([g.rpath[y] for g in gs]) for y in range(T)], dtype=float)/gn
         self.a = array([sum([g.apath[y] for g in gs]) for y in range(T)], dtype=float)/gn
         self.d = array([sum([-g.apath[y]*(g.apath[y]<0) for g in gs]) for y in range(T)], dtype=float)/gn
         self.c = array([sum([g.cpath[y] for g in gs]) for y in range(T)], dtype=float)/gn
         self.l = array([sum([g.epath[y] for g in gs]) for y in range(T)], dtype=float)/gn
+        self.ah = self.qh*self.h + self.a
 
         self.Beq = sum(array([(self.a[y] + self.qh*self.h[y])*self.pop[y]*(1-self.sp[y]) for y in range(T)], dtype=float))
         self.H = sum([self.h[y]*self.pop[y] for y in range(T)])
@@ -96,15 +100,18 @@ class state:
         self.D = sum([self.d[y]*self.pop[y] for y in range(T)])
         self.C = sum([self.c[y]*self.pop[y] for y in range(T)])
         self.L = sum([self.l[y]*self.pop[y] for y in range(T)])
+        self.AH = sum([self.ah[y]*self.pop[y] for y in range(T)])
         self.DebtRatio = self.D/self.C
-        return self.H, self.R, self.D, self.C, self.DebtRatio, self.Beq
 
 
-    def printprices(self):
+    def currentstate(self):
         """ print market prices and others like tax """
-        print "r=%2.2f," %(self.r*100),"w=%2.2f," %(self.w),"Tr=%2.2f" %(self.Tr), "b=%2.2f," %(self.b),\
-                "qh=%2.2f" %(self.qh), "H=%3.2f," %(self.H),"qh=%2.2f" %(self.qh), "R=%2.2f," %(self.R),\
-                "Debt Ratio=%2.2f" %(self.DebtRatio), "net Asset=%2.2f," %(self.A)
+        print "r=%2.2f," %(self.r*100),"w=%2.2f" %(self.w),'\n',\
+                "Bequest=%2.2f" %(self.Beq), "Tr=%2.2f" %(self.Tr),\
+                "b=%2.2f" %(self.b),'\n',"qh=%2.4f" %(self.qh),\
+                "H=%3.2f," %(self.H),'\n',"qr=%2.4f" %(self.qr),\
+                "R=%2.2f" %(self.R),'\n',"Debt=%2.2f" %(self.D), "Cons=%2.2f" %(self.C),\
+                "Debt Ratio=%2.2f" %(self.DebtRatio), "Liquid Asset=%2.2f" %(self.A)
 
 
     def update(self):
@@ -115,7 +122,8 @@ class state:
         self.Tr = (self.Tax+self.Beq-self.G)/self.Pt
         self.tb = self.zeta*(1-self.tw)*self.Pr/(self.L+self.zeta*self.Pr)
         self.b = self.zeta*(1-self.tw-self.tb)*self.w
-        self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, self.Tr, self.qh, self.qr])
+        self.p = array([self.r, self.w, self.b, self.tr, self.tw, self.tb, 
+                        self.Tr, self.qh, self.qr])
 
 
 class cohort:
@@ -132,17 +140,17 @@ class cohort:
         self.tol, self.neg = tol, neg
         """ house sizes and number of feasible feasible house sizes """
         # self.hh = array([0.0, 0.4, 1.0])
-        self.hh = array([0.0, 0.4, 1.0])
+        self.hh = array([0.0, 0.6, 1.0])
         # self.hh = loadtxt('hh.txt', delimiter='\n')
         self.sp = loadtxt('sp.txt', delimiter='\n')  # survival probability
         self.hN = hN = len(self.hh)
         """ age-specific productivity """
         self.ef = loadtxt('ef.txt', delimiter='\n')
-        """ employment status """
-        self.xx = [1, 0.4] #array([[0.4, 1] for y in range(T)], dtype=float)  # if unemployed, 40% of market wage is paid
-        self.xN = xN = len(self.xx) #array([len(self.xx[y]) for y in range(T)], dtype=int)
+        """ employment status: if unemployed, 40% of market wage is paid """
+        self.xx = [1, 0.4]
+        self.xN = xN = len(self.xx)
         self.uu = 0.1
-        self.ee = (23+self.uu)/24.0  # invariant distribution is (0.04 0.96)
+        self.ee = (23+self.uu)/24.0  # invariant distribution is (0.96 0.04)
         self.trx = array([[self.ee, 1-self.ee], [1-self.uu, self.uu]], dtype=float)
         """ value function and its interpolation """
         self.v = array([[[[0 for i in range(aN)] for h in range(hN)] for x in range(xN)] for y in range(T)], dtype=float)
@@ -226,7 +234,7 @@ class cohort:
                     self.vtilde[y][x0][h0] = interp1d(aa, self.v[y,x0,h0], kind='cubic')
                     self.atilde[y][x0][h0] = interp1d(aa, self.ao[y,x0,h0], kind='cubic')
 
-                    ai = [self.aN/4, self.aN*2/4, self.aN*3/4, self.aN-1]
+                    ai = [self.aN/4, self.aN*2/4, self.aN-1]
                     if y % 15 == 0 and h0 == 0 and x0 == 0:
                         print '------------'
                         print 'y=',y,'inc=%2.2f'%(income),'h0=',h0
@@ -330,7 +338,7 @@ class cohort:
 
         income = b + Tr if y >= -self.R else (1-tw-tb)*w*self.ef[y]*self.xx[x0] + Tr
 
-        di = a0*(1+(1-tr)*r*(a0>0)) + (self.hh[h0]-self.hh[h1])*qh \
+        di = a0*(1+(1-tr*(a0>0))*r) + (self.hh[h0]-self.hh[h1])*qh \
                 - self.hh[h0]*qh*(h0!=h1)*self.tcost - a1 + income
         co = (di + qr*(self.hh[h0]+self.gamma))/(1+self.psi)
         ro = (di*self.psi-qr*(self.hh[h0]+self.gamma))/((1+self.psi)*qr)
@@ -349,6 +357,7 @@ class cohort:
 class agent:
     """ This class is just a "struct" to hold an agent's lifecycle behaviour """
     def __init__(self, g):
+        self.hh = g.hh
         self.T = T = g.T
         """ the following paths for a, c, n and u are used in direct and value function methods
         In direct method, those paths are directly calculated, while in the value function
@@ -360,9 +369,10 @@ class agent:
         self.rpath = array([0 for y in range(T)], dtype=float)
         self.epath = array([0 for y in range(T)], dtype=float) # labor supply in efficiency unit
         self.upath = array([0 for y in range(T)], dtype=float)
+        self.ppath = array([0 for y in range(T)], dtype=float)
 
 
-    def simulatelife(self, g, p, ainit=0, hinit=0, xinit=0):
+    def simulatelife(self, e, g, ainit=0, hinit=0, xinit=0):
         """ Given prices, transfers, benefits and tax rates over one's life-cycle, 
         value and decision functions are calculated ***BACKWARD*** """
         T, hh = g.T, g.hh
@@ -380,7 +390,7 @@ class agent:
             
             v0 = g.neg
             for h1 in range(g.hN):
-                di, c1, r1 = g.findcr(y-T, self.xpath[y], self.hpath[y], h1, self.apath[y], self.apath[y+1], p)
+                di, c1, r1 = g.findcr(y-T, self.xpath[y], self.hpath[y], h1, self.apath[y], self.apath[y+1], e.p)
                 if c1 > 0:
                     # print nxx, trx, self.xpath[y], y, h1
                     ev = sum([g.vtilde[y+1][x1][h1](self.apath[y+1])*trx[self.xpath[y],x1] for x1 in range(len(nxx))])
@@ -390,9 +400,10 @@ class agent:
             self.upath[y] = g.util(self.cpath[y], self.rpath[y]+hh[self.hpath[y]])
             self.xpath[y+1] = g.nextx(y,self.xpath[y])
         # the oldest generation's consumption and labor supply
-        di, self.cpath[T-1], self.rpath[T-1] = g.findcr(-1, 0, self.hpath[-1], 0, self.apath[-1], 0, p)
+        di, self.cpath[T-1], self.rpath[T-1] = g.findcr(-1, 0, self.hpath[-1], 0, self.apath[-1], 0, e.p)
         self.upath[T-1] = g.util(self.cpath[T-1], self.rpath[T-1]+hh[self.hpath[T-1]])
         self.epath = [g.ef[y]*g.xx[self.xpath[y]] for y in range(T)]
+        self.ppath = [self.apath[y] + e.qh*g.hh[self.hpath[[y]]] for y in range(T)]
 
 
 
@@ -445,18 +456,50 @@ def agentpath(e, g, a):
     ax.spines['right'].set_color('none')
     ax.tick_params(labelcolor='w', top='off', bottom='off', left='off', right='off')
     ax1.plot(a.apath)
-    ax2.plot(g.hh[a.hpath])
-    ax3.plot(a.cpath)
-    ax4.plot(a.rpath)
-    ax5.plot(a.xpath)
-    ax6.plot(a.upath)
+    ax4.plot(g.hh[a.hpath])
+    ax2.plot(a.cpath)
+    ax5.plot(a.rpath)
+    ax6.plot(a.xpath)
+    ax3.plot(a.ppath)
     ax.set_xlabel('Age')
     ax1.set_title('Liquid Asset')
-    ax2.set_title('House')
-    ax3.set_title('Consumption')
-    ax4.set_title('Rent')
-    ax5.set_title('Productivity')
-    ax6.set_title('Period Util.')
+    ax4.set_title('House')
+    ax2.set_title('Consumption')
+    ax5.set_title('Rent')
+    ax6.set_title('Productivity')
+    ax3.set_title('Total Asset')
+    plt.show()
+    # time.sleep(1)
+    # plt.close() # plt.close("all")    
+
+def agepath(e):
+    fig = plt.figure(facecolor='white')
+    ax = fig.add_subplot(111)
+    ax1 = fig.add_subplot(231)
+    ax2 = fig.add_subplot(232)
+    ax3 = fig.add_subplot(233)
+    ax4 = fig.add_subplot(234)
+    ax5 = fig.add_subplot(235)
+    ax6 = fig.add_subplot(236)
+    fig.subplots_adjust(hspace=.5, wspace=.3, left=None, right=None, top=None, bottom=None)
+    ax.spines['top'].set_color('none')
+    ax.spines['bottom'].set_color('none')
+    ax.spines['left'].set_color('none')
+    ax.spines['right'].set_color('none')
+    ax.tick_params(labelcolor='w', top='off', bottom='off', left='off', right='off')
+    ax1.plot(e.a)
+    ax4.plot(e.h)
+    ax2.plot(e.c)
+    ax5.plot(e.rent)
+    ax6.plot(e.l)
+    ax3.plot(e.ah)
+    ax.set_xlabel('Age')
+    ax1.set_title('Liquid Asset')
+    ax4.set_title('House')
+    ax2.set_title('Consumption')
+    ax5.set_title('Rent')
+    ax6.set_title('Productivity')
+    ax3.set_title('Total Asset')
     plt.show()
     # time.sleep(1)
     # plt.close() # plt.close("all")    
@@ -474,15 +517,17 @@ def agentpath(e, g, a):
 #     return e.Hd_Hs[-1], e.Rd[-1], e.r[-1], e.Dratio[-1]
 
 if __name__ == '__main__':
-    e = state(TG=1, k=4.2, W=45, R=30, Hs=60, qh=1.15, qr=0.0450)
-    e.printprices()
-    g = cohort(W=45, R=30, psi=0.1, beta=0.96, tcost=0.05, gamma=0.99, aL=-1.0, aH=2.0, aN=301, ltv=0.6, dti=2.0)
+    e = state(TG=1, k=4.1, W=45, R=30, Hs=60, qh=0.91, qr=0.0435)
+    e.currentstate()
+    g = cohort(W=45, R=30, psi=0.1, beta=0.96, tcost=0.05, gamma=0.99, aL=-1.0, aH=1.0, aN=351, ltv=0.6, dti=2.0)
     g.valueNpolicy(e.p)
     print 'simulation starts...'
-    aa = [agent(g) for i in range(100)]
-    for a in aa:
-        a.simulatelife(g, e.p, xinit=random.binomial(1,0.04))
-    print e.sum(aa)
+    agents = [agent(g) for i in range(500)]
+    for a in agents:
+        a.simulatelife(e, g, xinit=random.binomial(1,0.04))
+    e.sum(agents)
+    e.update()
+    e.currentstate()
     # e.update()
     # e.printprices()
     # spath(e, g)
